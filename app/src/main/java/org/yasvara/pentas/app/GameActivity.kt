@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,16 +48,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import org.yasvara.pentas.charging.ChargingProfileRepository
+import org.yasvara.pentas.audio.DolbyBridge
+import org.yasvara.pentas.audio.DolbyProfileClient
 import org.yasvara.pentas.data.AppClassifier
 import org.yasvara.pentas.data.PerAppSettingStore
 import org.yasvara.pentas.data.SystemSettings
@@ -110,7 +114,7 @@ private fun GameScreen(pkg: String, finish: () -> Unit) {
     var part by remember { mutableStateOf<Part?>(null) }
     BackHandler(part != null) { part = null }
     AnimatedContent(part, label = "part") { p ->
-        if (p == null) Overview(pkg, deps, onOpen = { part = it }, finish = finish)
+        if (p == null) Overview(pkg, deps, refreshKey = part, onOpen = { part = it }, finish = finish)
         else Screen(p.title, onBack = { part = null }) {
             when (p) {
                 Part.GRAPHICS -> GraphicsEditor(pkg)
@@ -126,7 +130,13 @@ private fun GameScreen(pkg: String, finish: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish: () -> Unit) {
+private fun Overview(
+    pkg: String,
+    deps: GameDeps,
+    refreshKey: Part?,
+    onOpen: (Part) -> Unit,
+    finish: () -> Unit,
+) {
     val ctx = LocalContext.current
     val view = LocalView.current
     val cs = MaterialTheme.colorScheme
@@ -135,6 +145,24 @@ private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish
     val name = remember { info?.let { pm.getApplicationLabel(it).toString() } ?: pkg }
     val icon = remember { info?.let { pm.getApplicationIcon(it).toBitmap(192, 192).asImageBitmap() } }
     val added = remember { pkg in deps.system().games }
+    val isGame = added || info?.let { AppClassifier.isGame(it) } == true
+    val soundSummary by produceState("Checking profile…", pkg, refreshKey) {
+        value = withContext(Dispatchers.IO) {
+            when (val backend = DolbyBridge.backend(ctx)) {
+                DolbyBridge.Backend.NONE -> "Unavailable"
+                DolbyBridge.Backend.LUNARIS -> "Global profile"
+                DolbyBridge.Backend.XIAOMI -> {
+                    val assignment = DolbyProfileClient.getProfile(ctx, pkg)
+                    when {
+                        !assignment.monitoringEnabled -> "Auto-switch off"
+                        assignment.profile == DolbyProfileClient.PROFILE_DEFAULT -> "Follow default"
+                        else -> DolbyProfileClient.optionsFor(backend)
+                            .firstOrNull { it.second == assignment.profile }?.first ?: "Custom"
+                    }
+                }
+            }
+        }
+    }
     Screen(name, onBack = finish) {
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(36.dp)).background(cs.surfaceContainer).padding(20.dp),
@@ -146,10 +174,10 @@ private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish
                     icon?.let { Image(it, null, Modifier.size(56.dp)) }
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(pkg, style = label(12.sp), fontFamily = FontFamily.Monospace, color = cs.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (info != null && AppClassifier.isGame(info) || added) "Game" else "App",
-                        style = label(13.sp, 600), color = cs.primary)
+                    Text(if (isGame) "Game profile" else "App profile",
+                        style = label(14.sp, 620), color = cs.onSurface)
+                    Text(if (added) "In your library" else "Settings apply to this app",
+                        style = label(11.sp), color = cs.onSurfaceVariant)
                 }
                 Box(
                     Modifier.size(40.dp).clip(CircleShape).background(cs.surfaceContainerHigh)
@@ -185,7 +213,7 @@ private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish
             Triple(Part.PERFORMANCE, Sym.Speed, if (deps.perf().clockScope(pkg) == PerfTuner.ClockScope.GLOBAL) "Global clocks" else "Own clocks"),
             Triple(Part.THERMAL, Sym.Thermostat, ThermalProfiles.nameOf(perApp.thermalProfile(pkg), customJson)),
             Triple(Part.TOUCH, Sym.TouchApp, null),
-            Triple(Part.SOUND, Sym.GraphicEq, null),
+            Triple(Part.SOUND, Sym.GraphicEq, soundSummary),
             if (DeviceSupport.thermalDaemon) Triple(Part.CHARGING, Sym.BatteryChargingFull,
                 deps.charging().getAppProfileId(pkg)?.let { id -> deps.charging().getById(id)?.name } ?: "Follow global") else null,
         )

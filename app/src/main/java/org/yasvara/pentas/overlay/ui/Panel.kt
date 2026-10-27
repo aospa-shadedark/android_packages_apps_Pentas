@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -38,12 +39,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.drawable.toBitmap
 import org.yasvara.pentas.R
 import org.yasvara.pentas.overlay.LocalOverlay
 import org.yasvara.pentas.overlay.Page
@@ -53,20 +56,21 @@ import org.yasvara.pentas.overlay.ui.tuner.Tuner
 import org.yasvara.pentas.ui.kit.Glyph
 import org.yasvara.pentas.ui.kit.Kit
 import org.yasvara.pentas.ui.kit.PageHeader
+import org.yasvara.pentas.ui.kit.RoundButton
 import org.yasvara.pentas.ui.kit.label
 
 val PanelWidth = 320.dp
 
 /** The 320 dp panel: one page at a time, swapped in place. */
 @Composable
-fun Panel(mode: Int) {
+fun Panel(mode: Int, onClose: () -> Unit) {
     val o = LocalOverlay.current
     val page by o.state.page
     Column(
         Modifier.width(PanelWidth).fillMaxHeight().clip(RoundedCornerShape(28.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
     ) {
-        if (mode == SidebarMode.MODE_GAME) GameTabs()
+        if (mode == SidebarMode.MODE_GAME) GameTabs(onClose)
         AnimatedContent(
             page,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -95,13 +99,18 @@ fun Panel(mode: Int) {
 
 /** The common game actions stay one tap away from both the quick panel and tuner. */
 @Composable
-private fun GameTabs() {
+private fun GameTabs(onClose: () -> Unit) {
     val o = LocalOverlay.current
     val page by o.state.page
     val tunerTab by o.state.tunerTab
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
     val ctx = LocalContext.current
+    val gameIcon = remember(o.pkg) {
+        o.pkg?.let { pkg -> runCatching {
+            ctx.packageManager.getApplicationIcon(pkg).toBitmap(72, 72).asImageBitmap()
+        }.getOrNull() }
+    }
     val game = remember(o.pkg) {
         o.pkg?.let { pkg -> runCatching {
             ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
@@ -123,8 +132,15 @@ private fun GameTabs() {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("PENTAS", style = label(10.sp, 700), color = cs.primary)
+        gameIcon?.let {
+            Image(it, game, Modifier.width(22.dp).height(22.dp).clip(RoundedCornerShape(7.dp)))
+        }
         Text(game, style = label(10.sp), color = cs.onSurfaceVariant,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        RoundButton(R.drawable.sym_close, "Close game panel", {
+            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            onClose()
+        }, size = 26.dp)
     }
     Row(
         Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 10.dp),

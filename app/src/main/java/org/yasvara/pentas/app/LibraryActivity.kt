@@ -126,10 +126,10 @@ internal fun Library() {
         runCatching { ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString() }
             .getOrDefault(pkg).contains(query, ignoreCase = true)
     }
-    Screen("Ready when you are.", onBack = null, bottomBar = true, actions = {
+    Screen("Games", onBack = null, bottomBar = true, actions = {
         RoundButton(R.drawable.sym_tune, "Global clocks", { ctx.startActivity(Intent(ctx, GlobalActivity::class.java)) }, size = 40.dp)
     }) {
-        Text("Your games, tuned your way.", style = label(14.sp), color = cs.onSurfaceVariant,
+        Text("Manage each game's profile, controls and sound.", style = label(14.sp), color = cs.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
         if (games.size >= 5) Row(
             Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(cs.surfaceContainerHigh)

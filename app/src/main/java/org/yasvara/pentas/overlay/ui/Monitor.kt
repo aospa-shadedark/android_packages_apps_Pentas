@@ -111,7 +111,11 @@ private const val TOP_APPS = 20
  * into tabs; tapping the open tab folds it back, another tab switches.
  */
 @Composable
-fun Monitor(modifier: Modifier, controls: @Composable ColumnScope.() -> Unit) {
+fun Monitor(
+    modifier: Modifier,
+    scrollControls: Boolean = true,
+    controls: @Composable ColumnScope.() -> Unit,
+) {
     val open by LocalOverlay.current.state.metric
     SharedTransitionLayout(modifier) {
         AnimatedContent(open, transitionSpec = { FadeIn togetherWith FadeOut }, contentKey = { it != null }, label = "metric") { m ->
@@ -125,13 +129,13 @@ fun Monitor(modifier: Modifier, controls: @Composable ColumnScope.() -> Unit) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Kit.Gap)) {
                 if (m == null) {
                     Tiles(morph)
-                    Column(
-                        Modifier.weight(1f).verticalScroll(rememberScrollState()).animateEnterExit(
+                    val controlsModifier = Modifier.weight(1f)
+                        .then(if (scrollControls) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                        .animateEnterExit(
                             enter = slideInVertically(Kit.default()) { it / 4 },
                             exit = slideOutVertically(Kit.default()) { it / 4 },
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(Kit.Gap), content = controls,
-                    )
+                        )
+                    Column(controlsModifier, verticalArrangement = Arrangement.spacedBy(Kit.Gap), content = controls)
                 } else {
                     Tabs(m, morph)
                     Card(m, Modifier.weight(1f).then(morph[m.ordinal]), Modifier.skipToLookaheadSize())

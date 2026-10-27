@@ -85,7 +85,8 @@ fun GraphicsEditor(pkg: String, game: Boolean = true) {
     if (game) Block(padding = 10.dp) {
         SettingRow("Render resolution", tag = { RestartTag() }, value = "%.2f×".format(scale))
         ScaleFigure(scale, screen)
-        Slider(min(scale, 1f), { scale = it }, range = 0.25f..1f, steps = 14, onCommit = ::commit)
+        Slider(min(scale, 1f), { scale = it }, range = 0.25f..1f, steps = 14, onCommit = ::commit,
+            description = "Render resolution")
     }
     Block(padding = 10.dp) {
         var style by remember(pkg) { mutableIntStateOf(t.perApp().displayStyle(pkg)) }
@@ -221,6 +222,9 @@ private fun ClockRange(
         onChange = { a, b -> if (editable) { lo = a; hi = b } },
         onCommit = { a, b -> if (editable) onCommit(table[a], table[b]) },
         marker = ceiling?.let { table.indexOfNearest(it) },
+        enabled = editable,
+        description = name,
+        valueText = { "${format(table[it])} $unit" },
     )
 }
 

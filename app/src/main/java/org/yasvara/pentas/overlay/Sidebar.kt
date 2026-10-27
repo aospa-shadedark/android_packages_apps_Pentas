@@ -12,6 +12,7 @@ import android.os.Process
 import android.os.UserHandle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -19,6 +20,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +45,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -176,12 +182,16 @@ class Sidebar @Inject constructor(
     @androidx.compose.runtime.Composable
     private fun Handle() {
         val cs = MaterialTheme.colorScheme
+        val view = LocalView.current
         val left by onLeft
         val idleAlpha = remember { settings.handleIdleAlphaState }
         val dim by animateFloatAsState(if (idle.value) idleAlpha.intValue / 100f else 1f, label = "idle")
         Box(
             Modifier.size(20.dp, 72.dp)
-                .pointerInput(Unit) { detectTapGestures { showPanel() } }
+                .clickable(role = Role.Button) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    showPanel()
+                }.semantics { contentDescription = "Open Pentas panel" }
                 .pointerInput(Unit) {
                     detectDragGestures(
                         onDragStart = { scheduleIdle() },
@@ -290,7 +300,7 @@ class Sidebar @Inject constructor(
                     .pointerInput(Unit) { detectTapGestures { } },
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (left) { Rail(::close); Panel(mode) } else { Panel(mode); Rail(::close) }
+                if (left) { Rail(::close); Panel(mode, ::close) } else { Panel(mode, ::close); Rail(::close) }
             }
         }
     }

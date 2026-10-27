@@ -15,8 +15,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.progressSemantics
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -56,8 +60,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -228,7 +237,7 @@ fun <T> Segmented(
 ) {
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
-    Row(modifier.fillMaxWidth().height(height), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(modifier.fillMaxWidth().height(height).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         options.forEachIndexed { i, (text, value) ->
             val on = value == selected
             val ok = enabled(value)
@@ -238,9 +247,11 @@ fun <T> Segmented(
             )
             Box(
                 Modifier.weight(1f).fillMaxHeight().clip(shape).background(bg)
-                    .clickable(enabled = ok && !on, role = Role.RadioButton) {
-                        view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
-                        onSelect(value)
+                    .selectable(selected = on, enabled = ok, role = Role.RadioButton) {
+                        if (!on) {
+                            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                            onSelect(value)
+                        }
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -261,7 +272,7 @@ fun <T> Segmented(
 
 /** Compact M3E switch: 40×24, thumb grows when on. */
 @Composable
-fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
+fun Toggle(checked: Boolean, onChange: ((Boolean) -> Unit)?, enabled: Boolean = true, description: String? = null) {
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
     val x by animateDpAsState(if (checked) 18.dp else 4.dp, Kit.fast(), label = "tx")
@@ -270,12 +281,13 @@ fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = tru
     Box(
         Modifier.size(40.dp, 24.dp).clip(CircleShape).background(track)
             .then(if (checked) Modifier else Modifier.background(Color.Transparent))
-            .clickable(enabled = enabled, role = Role.Switch) {
+            .then(if (onChange != null) Modifier.toggleable(checked, enabled = enabled, role = Role.Switch) { value ->
                 view.performHapticFeedback(
-                    if (checked) HapticFeedbackConstants.TOGGLE_OFF else HapticFeedbackConstants.TOGGLE_ON,
+                    if (value) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF,
                 )
-                onChange(!checked)
-            },
+                onChange(value)
+            } else Modifier)
+            .semantics { description?.let { contentDescription = it } },
     ) {
         Box(
             Modifier.offset(x = x, y = (24.dp - d) / 2).size(d).clip(CircleShape)
@@ -299,17 +311,24 @@ fun SettingRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(text, style = label(12.5.sp), color = cs.onSurface, maxLines = 1)
+        Text(text, style = label(12.5.sp), color = cs.onSurface, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         tag?.invoke()
-        Spacer(Modifier.weight(1f))
         value?.let { Text(it, style = num(12.sp, 500), color = cs.onSurfaceVariant) }
         trailing()
     }
 }
 
 @Composable
-fun SwitchRow(text: String, checked: Boolean, onChange: (Boolean) -> Unit, tag: (@Composable () -> Unit)? = null) =
-    SettingRow(text, tag = tag) { Toggle(checked, onChange) }
+fun SwitchRow(text: String, checked: Boolean, onChange: (Boolean) -> Unit, tag: (@Composable () -> Unit)? = null) {
+    val view = LocalView.current
+    SettingRow(text, modifier = Modifier.toggleable(checked, role = Role.Switch) { value ->
+        view.performHapticFeedback(
+            if (value) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF,
+        )
+        onChange(value)
+    }, tag = tag) { Toggle(checked, null) }
+}
 
 /**
  * M3E slider: a thick active track, a bar handle, and a gap before the inactive track.
@@ -326,6 +345,7 @@ fun Slider(
     height: Dp = 24.dp,
     @DrawableRes icon: Int = 0,
     marker: Float? = null,
+    description: String? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
@@ -340,6 +360,18 @@ fun Slider(
     }
     BoxWithConstraints(
         modifier.fillMaxWidth().height(height)
+            .progressSemantics(value, range, steps)
+            .semantics {
+                description?.let { contentDescription = it }
+                setProgress { requested ->
+                    val next = snap((requested - range.start) / (range.endInclusive - range.start))
+                    if (next == value) false else {
+                        change(next)
+                        commit(next)
+                        true
+                    }
+                }
+            }
             .pointerInput(range, steps) {
                 detectTapGestures { o ->
                     val v = snap(o.x / size.width)
@@ -349,7 +381,7 @@ fun Slider(
                 }
             }
             .pointerInput(range, steps) {
-                detectDragGestures(
+                detectHorizontalDragGestures(
                     onDragStart = { o -> drag = o.x / size.width; change(snap(drag)) },
                     onDragEnd = {
                         if (!drag.isNaN()) {
@@ -360,7 +392,7 @@ fun Slider(
                     },
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
-                    drag = (drag + d.x / size.width).coerceIn(0f, 1f)
+                    drag = (drag + d / size.width).coerceIn(0f, 1f)
                     change(snap(drag)); c.consume()
                 }
             },
@@ -406,6 +438,9 @@ fun RangeSlider(
     modifier: Modifier = Modifier,
     marker: Int? = null,
     height: Dp = 24.dp,
+    enabled: Boolean = true,
+    description: String = "Range",
+    valueText: (Int) -> String = { it.toString() },
 ) {
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
@@ -424,7 +459,8 @@ fun RangeSlider(
     }
     BoxWithConstraints(
         modifier.fillMaxWidth().height(height)
-            .pointerInput(count) {
+            .pointerInput(count, enabled) {
+                if (!enabled) return@pointerInput
                 detectTapGestures { o ->
                     val f = o.x / size.width
                     dragLow = pickLow(f)
@@ -434,8 +470,9 @@ fun RangeSlider(
                     view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                 }
             }
-            .pointerInput(count) {
-                detectDragGestures(
+            .pointerInput(count, enabled) {
+                if (!enabled) return@pointerInput
+                detectHorizontalDragGestures(
                     onDragStart = { o -> drag = o.x / size.width; dragLow = pickLow(drag) },
                     onDragEnd = {
                         if (!drag.isNaN()) {
@@ -447,7 +484,7 @@ fun RangeSlider(
                     },
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
-                    drag = (drag + d.x / size.width).coerceIn(0f, 1f)
+                    drag = (drag + d / size.width).coerceIn(0f, 1f)
                     val (a, b) = move(index(drag)); change(a, b); c.consume()
                 }
             },
@@ -468,8 +505,26 @@ fun RangeSlider(
                 .clip(RoundedCornerShape(if (x0 > 7.dp) 3.dp else r, 3.dp, 3.dp, if (x0 > 7.dp) 3.dp else r))
                 .background(cs.primary),
         )
-        Box(Modifier.offset(x = x0).size(3.dp, height).clip(CircleShape).background(cs.primary))
-        Box(Modifier.offset(x = x1).size(3.dp, height).clip(CircleShape).background(cs.primary))
+        Box(Modifier.offset(x = x0).size(3.dp, height).clip(CircleShape).background(cs.primary)
+            .semantics {
+                contentDescription = "$description minimum"
+                progressBarRangeInfo = ProgressBarRangeInfo(low.toFloat(), 0f..high.toFloat(), (high - 1).coerceAtLeast(0))
+                stateDescription = valueText(low)
+                if (!enabled) disabled() else setProgress { requested ->
+                    val next = requested.roundToInt().coerceIn(0, high)
+                    if (next == low) false else { change(next, hi); commit(next, hi); true }
+                }
+            })
+        Box(Modifier.offset(x = x1).size(3.dp, height).clip(CircleShape).background(cs.primary)
+            .semantics {
+                contentDescription = "$description maximum"
+                progressBarRangeInfo = ProgressBarRangeInfo(high.toFloat(), low.toFloat()..last.toFloat(), (last - low - 1).coerceAtLeast(0))
+                stateDescription = valueText(high)
+                if (!enabled) disabled() else setProgress { requested ->
+                    val next = requested.roundToInt().coerceIn(low, last)
+                    if (next == high) false else { change(lo, next); commit(lo, next); true }
+                }
+            })
         Box(
             Modifier.offset(x = x1 + 7.dp, y = y).width((w - x1 - 4.dp).coerceAtLeast(0.dp)).height(track)
                 .clip(RoundedCornerShape(3.dp, r, r, 3.dp)).background(cs.surfaceContainerHighest),
@@ -497,8 +552,8 @@ fun PageHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         RoundButton(back, "Back", onBack)
-        Text(title, style = label(15.sp, 600), color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-        Spacer(Modifier.weight(1f))
+        Text(title, style = label(15.sp, 600), color = MaterialTheme.colorScheme.onSurface, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         trailing()
     }
 }

@@ -77,7 +77,7 @@ fun BluetoothPage() {
         BluetoothDevice.ACTION_BATTERY_LEVEL_CHANGED,
     ) { sync() }
     SubPage("Bluetooth", trailing = {
-        Toggle(on, { want -> runCatching { if (want) adapter?.enable() else adapter?.disable() } })
+        Toggle(on, { want -> runCatching { if (want) adapter?.enable() else adapter?.disable() } }, description = "Bluetooth")
     }) {
         if (!on) return@SubPage
         devices.forEachIndexed { i, d ->
@@ -111,7 +111,7 @@ fun WifiPage() {
         WifiManager.NETWORK_STATE_CHANGED_ACTION,
     ) { on = wifi.isWifiEnabled; rev++ }
     LaunchedEffect(on) { if (on) runCatching { wifi.startScan() } }
-    SubPage("Wi-Fi", trailing = { Toggle(on, { wifi.setWifiEnabled(it) }) }) {
+    SubPage("Wi-Fi", trailing = { Toggle(on, { wifi.setWifiEnabled(it) }, description = "Wi-Fi") }) {
         if (!on) return@SubPage
         @Suppress("DEPRECATION") val info = remember(rev) { wifi.connectionInfo }
         val current = info?.ssid?.trim('"')?.takeIf { info.networkId != -1 }
