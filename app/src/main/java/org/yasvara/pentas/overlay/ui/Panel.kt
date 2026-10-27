@@ -4,36 +4,56 @@
  */
 package org.yasvara.pentas.overlay.ui
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.R
 import org.yasvara.pentas.overlay.LocalOverlay
 import org.yasvara.pentas.overlay.Page
+import org.yasvara.pentas.overlay.TunerTab
+import org.yasvara.pentas.session.SidebarMode
 import org.yasvara.pentas.overlay.ui.tuner.Tuner
+import org.yasvara.pentas.ui.kit.Glyph
 import org.yasvara.pentas.ui.kit.Kit
 import org.yasvara.pentas.ui.kit.PageHeader
+import org.yasvara.pentas.ui.kit.label
 
 val PanelWidth = 320.dp
 
@@ -42,12 +62,14 @@ val PanelWidth = 320.dp
 fun Panel(mode: Int) {
     val o = LocalOverlay.current
     val page by o.state.page
-    Box(
+    Column(
         Modifier.width(PanelWidth).fillMaxHeight().clip(RoundedCornerShape(28.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
     ) {
+        if (mode == SidebarMode.MODE_GAME) GameTabs()
         AnimatedContent(
             page,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             transitionSpec = {
                 val forward = targetState != Page.HOME
                 (fadeIn(spring(stiffness = 1600f)) + slideInHorizontally(spring(0.8f, 380f)) { if (forward) it / 6 else -it / 6 })
@@ -66,6 +88,74 @@ fun Panel(mode: Int) {
                 Page.RECORD -> RecordPage()
                 Page.EDIT -> EditPage()
                 Page.APPS -> AppsPage()
+            }
+        }
+    }
+}
+
+/** The common game actions stay one tap away from both the quick panel and tuner. */
+@Composable
+private fun GameTabs() {
+    val o = LocalOverlay.current
+    val page by o.state.page
+    val tunerTab by o.state.tunerTab
+    val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
+    val ctx = LocalContext.current
+    val game = remember(o.pkg) {
+        o.pkg?.let { pkg -> runCatching {
+            ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg) }.orEmpty()
+    }
+    val selected = when {
+        page == Page.HOME -> 0
+        page == Page.TUNER && tunerTab == TunerTab.SOUND -> 2
+        page == Page.TUNER -> 1
+        else -> -1
+    }
+    val tabs = listOf(
+        Triple("Quick", R.drawable.sym_bolt, { o.state.home() }),
+        Triple("Tune", R.drawable.sym_tune, { o.state.tuner(o.state.lastTuneTab.value) }),
+        Triple("Sound", R.drawable.sym_graphic_eq, { o.state.tuner(TunerTab.SOUND) }),
+    )
+    Row(
+        Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("PENTAS", style = label(10.sp, 700), color = cs.primary)
+        Text(game, style = label(10.sp), color = cs.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        tabs.forEachIndexed { index, (title, icon, action) ->
+            val active = index == selected
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val scale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "panel tab press")
+            val background by animateColorAsState(
+                if (active) cs.secondaryContainer else cs.surfaceContainerHigh,
+                label = "panel tab color",
+            )
+            val foreground = if (active) cs.onSecondaryContainer else cs.onSurfaceVariant
+            Row(
+                Modifier.weight(1f).height(40.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+                    .clip(RoundedCornerShape(15.dp)).background(background)
+                    .selectable(selected = active, role = Role.Tab,
+                        interactionSource = interaction, indication = null) {
+                        if (!active) {
+                            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                            action()
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+            ) {
+                Glyph(icon, foreground, 16.dp)
+                Text(title, style = label(11.sp, if (active) 650 else 500),
+                    color = foreground)
             }
         }
     }

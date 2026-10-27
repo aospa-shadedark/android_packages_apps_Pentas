@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,8 +24,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -49,10 +53,15 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -79,7 +88,7 @@ class LibraryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { PentasTheme { Library() } }
+        setContent { PentasTheme { PentasMain() } }
     }
 }
 
@@ -102,20 +111,62 @@ private fun gamesOf(ctx: Context, system: SystemSettings): List<String> {
 }
 
 @Composable
-private fun Library() {
+internal fun Library() {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val deps = remember { EntryPointAccessors.fromApplication(ctx.applicationContext, LibraryDeps::class.java) }
     var rev by remember { mutableIntStateOf(0) }
     var adding by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { rev++ }
     val games by produceState(emptyList<String>(), rev) { value = withContext(Dispatchers.IO) { gamesOf(ctx, deps.system()) } }
     val live = remember(rev) { Settings.System.getString(ctx.contentResolver, SessionService.KEY_SESSION_LIVE).orEmpty() }
-    Screen("Games", onBack = null, actions = {
-        RoundButton(R.drawable.sym_monitoring, "Sessions", { ctx.startActivity(Intent(ctx, FpsStatsActivity::class.java)) }, size = 40.dp)
+    val ordered = if (live in games) listOf(live) + games.filterNot { it == live } else games
+    val shown = if (query.isBlank()) ordered else ordered.filter { pkg ->
+        runCatching { ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString() }
+            .getOrDefault(pkg).contains(query, ignoreCase = true)
+    }
+    Screen("Ready when you are.", onBack = null, bottomBar = true, actions = {
         RoundButton(R.drawable.sym_tune, "Global clocks", { ctx.startActivity(Intent(ctx, GlobalActivity::class.java)) }, size = 40.dp)
-        RoundButton(R.drawable.sym_settings, "Settings", { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }, size = 40.dp)
     }) {
-        games.chunked(2).forEach { pair ->
+        Text("Your games, tuned your way.", style = label(14.sp), color = cs.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
+        if (games.size >= 5) Row(
+            Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(cs.surfaceContainerHigh)
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Glyph(R.drawable.sym_search, cs.onSurfaceVariant, 20.dp)
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) Text("Find a game", style = label(15.sp), color = cs.onSurfaceVariant)
+                BasicTextField(query, { query = it }, Modifier.fillMaxWidth().semantics { contentDescription = "Find a game" },
+                    singleLine = true, textStyle = label(15.sp).copy(color = cs.onSurface), cursorBrush = SolidColor(cs.primary))
+            }
+        }
+        if (games.isEmpty()) Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(cs.surfaceContainer).padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Glyph(R.drawable.sym_videogame_asset, cs.primary, 28.dp)
+            Text("Build your library", style = label(19.sp, 600), color = cs.onSurface)
+            Text("Add a game to keep its launch and controls together.",
+                style = label(13.sp), color = cs.onSurfaceVariant)
+        }
+        if (query.isBlank()) shown.firstOrNull()?.let { pkg ->
+            Text("READY TO PLAY", style = label(11.sp, 650), color = cs.primary,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+            GameCard(pkg, pkg == live, deps, Modifier.fillMaxWidth(), featured = true)
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Your library", style = label(21.sp, 600), color = cs.onSurface,
+                modifier = Modifier.weight(1f))
+            Text(if (query.isBlank()) "${games.size} games" else "${shown.size} results",
+                style = label(12.sp), color = cs.onSurfaceVariant)
+        }
+        if (query.isNotBlank() && shown.isEmpty()) Text("No games match your search.",
+            style = label(13.sp), color = cs.onSurfaceVariant, modifier = Modifier.padding(8.dp))
+        shown.drop(if (query.isBlank() && shown.isNotEmpty()) 1 else 0).chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEach { pkg -> GameCard(pkg, pkg == live, deps, Modifier.weight(1f)) }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
@@ -134,8 +185,9 @@ private fun Library() {
 }
 
 @Composable
-private fun GameCard(pkg: String, live: Boolean, deps: LibraryDeps, modifier: Modifier) {
+private fun GameCard(pkg: String, live: Boolean, deps: LibraryDeps, modifier: Modifier, featured: Boolean = false) {
     val ctx = LocalContext.current
+    val view = LocalView.current
     val cs = MaterialTheme.colorScheme
     val pm = ctx.packageManager
     val label = remember(pkg) { runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg) }
@@ -147,17 +199,28 @@ private fun GameCard(pkg: String, live: Boolean, deps: LibraryDeps, modifier: Mo
         }
     }
     Box(
-        modifier.aspectRatio(1.25f).clip(RoundedCornerShape(28.dp)).background(cs.surfaceContainer)
-            .clickable { GameActivity.start(ctx, pkg) },
+        modifier.aspectRatio(if (featured) 1.8f else 1.25f)
+            .clip(RoundedCornerShape(28.dp)).background(cs.surfaceContainer)
+            .clickable {
+                view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                GameActivity.start(ctx, pkg)
+            },
     ) {
         banner?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to cs.surfaceContainer)))
-        Column(Modifier.align(Alignment.BottomStart).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            icon?.let { Image(it, null, Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))) }
-            Text(label, style = label(14.sp, 600), color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.align(Alignment.BottomStart).padding(if (featured) 20.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            icon?.let { Image(it, null, Modifier.size(if (featured) 44.dp else 36.dp).clip(RoundedCornerShape(10.dp))) }
+            Text(label, style = label(if (featured) 22.sp else 14.sp, 600), color = cs.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (featured) Text("Open game settings and launch", style = label(11.sp), color = cs.onSurfaceVariant)
         }
+        if (featured) RoundButton(R.drawable.sym_play_arrow, "Launch $label", {
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            pm.getLaunchIntentForPackage(pkg)?.let(ctx::startActivity)
+        }, Modifier.align(Alignment.TopEnd).padding(10.dp), size = 40.dp)
         if (live) Text(
-            "Playing", Modifier.align(Alignment.TopEnd).padding(10.dp).clip(CircleShape).background(cs.primary)
+            "Playing", Modifier.align(Alignment.TopStart).padding(10.dp).clip(CircleShape).background(cs.primary)
                 .padding(horizontal = 10.dp, vertical = 3.dp),
             style = label(11.sp, 600), color = cs.onPrimary,
         )
@@ -170,7 +233,12 @@ private fun AddGameSheet(deps: LibraryDeps, existing: Set<String>, onDone: () ->
     val cs = MaterialTheme.colorScheme
     var all by remember { mutableStateOf(emptyList<AppRef>()) }
     var query by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { all = deps.apps().launchableApps().filter { it.packageName !in existing } }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        all = withContext(Dispatchers.IO) { deps.apps().launchableApps().filter { it.packageName !in existing } }
+        loading = false
+    }
+    val matches = all.filter { query.isBlank() || it.label.contains(query, true) }
     ModalBottomSheet(onDismissRequest = onDone, containerColor = cs.surfaceContainerLow) {
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -184,15 +252,22 @@ private fun AddGameSheet(deps: LibraryDeps, existing: Set<String>, onDone: () ->
                         textStyle = label(15.sp).copy(color = cs.onSurface), cursorBrush = SolidColor(cs.primary))
                 }
             }
-            all.filter { query.isBlank() || it.label.contains(query, true) }.take(60).forEach { app ->
-                val bmp = remember(app.packageName) { app.icon?.toBitmap(96, 96)?.asImageBitmap() }
-                Row(
-                    Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(16.dp))
-                        .clickable { deps.system().addGame(app.packageName); onDone() }.padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    bmp?.let { Image(it, null, Modifier.size(40.dp)) }
-                    Text(app.label, style = label(15.sp, 550), color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (loading || matches.isEmpty()) Text(
+                if (loading) "Loading apps…" else if (query.isBlank()) "No more apps to add" else "No apps match your search",
+                Modifier.padding(16.dp), style = label(13.sp), color = cs.onSurfaceVariant,
+            ) else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(matches, key = { it.packageName }) { app ->
+                    val bmp = remember(app.packageName) { app.icon?.toBitmap(96, 96)?.asImageBitmap() }
+                    Row(
+                        Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(16.dp))
+                            .clickable { deps.system().addGame(app.packageName); onDone() }.padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        bmp?.let { Image(it, null, Modifier.size(40.dp)) }
+                        Text(app.label, style = label(15.sp, 550), color = cs.onSurface,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }

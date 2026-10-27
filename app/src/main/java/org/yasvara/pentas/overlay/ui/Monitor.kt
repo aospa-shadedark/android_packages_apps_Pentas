@@ -126,7 +126,7 @@ fun Monitor(modifier: Modifier, controls: @Composable ColumnScope.() -> Unit) {
                 if (m == null) {
                     Tiles(morph)
                     Column(
-                        Modifier.weight(1f).animateEnterExit(
+                        Modifier.weight(1f).verticalScroll(rememberScrollState()).animateEnterExit(
                             enter = slideInVertically(Kit.default()) { it / 4 },
                             exit = slideOutVertically(Kit.default()) { it / 4 },
                         ),

@@ -25,6 +25,7 @@ class OverlayState @Inject constructor() {
     /** The tile opened into its detail card; null shows all four. */
     val metric = mutableStateOf<Metric?>(null)
     val tunerTab = mutableStateOf(TunerTab.GRAPHICS)
+    val lastTuneTab = mutableStateOf(TunerTab.GRAPHICS)
     val profileList = mutableStateOf(false)
     /** The game's thermal profile index, loaded when the panel opens. */
     val profile = mutableIntStateOf(0)
@@ -45,7 +46,11 @@ class OverlayState @Inject constructor() {
     var onStatsRecord: (Boolean) -> Unit = {}
 
     fun open(p: Page) { profileList.value = false; page.value = p }
-    fun tuner(tab: TunerTab) { tunerTab.value = tab; open(Page.TUNER) }
+    fun tuner(tab: TunerTab) {
+        if (tab != TunerTab.SOUND) lastTuneTab.value = tab
+        tunerTab.value = tab
+        open(Page.TUNER)
+    }
     fun home() = open(Page.HOME)
     /** Opens [m]'s card, or folds it back when it is the open one. */
     fun toggle(m: Metric) { metric.value = m.takeIf { it != metric.value } }
@@ -53,6 +58,8 @@ class OverlayState @Inject constructor() {
     fun reset() {
         page.value = Page.HOME
         metric.value = null
+        tunerTab.value = TunerTab.GRAPHICS
+        lastTuneTab.value = TunerTab.GRAPHICS
         profileList.value = false
         keyboard.value = false
     }

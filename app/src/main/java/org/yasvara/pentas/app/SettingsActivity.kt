@@ -142,7 +142,7 @@ private fun loadOverview(context: Context): Overview {
 // ── Screen ──────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PentasSettingsScreen(onBack: () -> Unit) {
+internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) {
     val context = LocalContext.current
     val appSettings = remember { AppSettings(context.applicationContext) }
     val obs = appSettings.observable
@@ -155,15 +155,18 @@ private fun PentasSettingsScreen(onBack: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            top = top + 8.dp, bottom = bottom + 32.dp, start = 12.dp, end = 12.dp,
+            top = top + 8.dp, bottom = (if (showBack) bottom else 0.dp) + 32.dp,
+            start = 12.dp, end = 12.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         item {
-            FilledTonalIconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                Icon(Sym.ArrowBack, contentDescription = "Back")
+            if (showBack) {
+                FilledTonalIconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                    Icon(Sym.ArrowBack, contentDescription = "Back")
+                }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(12.dp))
             Hero(appSettings)
         }
 

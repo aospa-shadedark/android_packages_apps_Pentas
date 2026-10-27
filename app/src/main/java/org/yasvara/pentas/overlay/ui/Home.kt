@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.UserHandle
 import android.provider.Settings
 import android.text.format.DateFormat
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -31,8 +32,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialShapes
@@ -53,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,7 +88,8 @@ fun Home(mode: Int) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(Kit.Gap)) {
             Header()
-            if (mode == SidebarMode.MODE_GAME) Monitor(Modifier.weight(1f)) { Controls() } else Controls()
+            if (mode == SidebarMode.MODE_GAME) Monitor(Modifier.weight(1f)) { Controls() }
+            else Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { Controls() }
         }
         if (listOpen) ProfileList()
     }
@@ -97,7 +102,6 @@ private fun ColumnScope.Controls() {
     MediaCard()
     BrightnessRow()
     Toggles()
-    Spacer(Modifier.weight(1f))
     Tools()
 }
 
@@ -242,6 +246,7 @@ private fun BrightnessRow() {
 private fun Toggles() {
     val o = LocalOverlay.current
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     val tiles = o.tiles.toggles
     Row(Modifier.fillMaxWidth().height(38.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         tiles.forEachIndexed { i, t ->
@@ -250,7 +255,12 @@ private fun Toggles() {
             val bg by animateColorAsState(if (on) cs.primary else cs.surfaceContainerHigh, label = "tgbg")
             Box(
                 Modifier.weight(1f).fillMaxHeight().clip(shape).background(bg)
-                    .combinedClickable(onLongClick = t::onLongClick, onClick = t::toggle),
+                    .combinedClickable(onLongClick = t::onLongClick, onClick = {
+                        view.performHapticFeedback(
+                            if (on) HapticFeedbackConstants.TOGGLE_OFF else HapticFeedbackConstants.TOGGLE_ON,
+                        )
+                        t.toggle()
+                    }),
                 contentAlignment = Alignment.Center,
             ) { TileIcon(t, if (on) cs.onPrimary else cs.onSurface) }
         }
@@ -272,7 +282,7 @@ private fun Tools() {
     if (pages.isEmpty()) return
     val pager = rememberPagerState { pages.size }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        HorizontalPager(pager, Modifier.fillMaxWidth(), pageSpacing = 8.dp) { p ->
+        HorizontalPager(pager, Modifier.fillMaxWidth().height(40.dp), pageSpacing = 8.dp) { p ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 pages[p].forEach { t ->
                     val on by t.observeEnabled()

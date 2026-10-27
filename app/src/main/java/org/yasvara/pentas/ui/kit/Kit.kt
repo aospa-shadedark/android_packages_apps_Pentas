@@ -5,6 +5,7 @@
 package org.yasvara.pentas.ui.kit
 
 import android.graphics.Typeface
+import android.view.HapticFeedbackConstants
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -52,6 +53,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -225,6 +227,7 @@ fun <T> Segmented(
     height: Dp = Kit.Control,
 ) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     Row(modifier.fillMaxWidth().height(height), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         options.forEachIndexed { i, (text, value) ->
             val on = value == selected
@@ -235,7 +238,10 @@ fun <T> Segmented(
             )
             Box(
                 Modifier.weight(1f).fillMaxHeight().clip(shape).background(bg)
-                    .clickable(enabled = ok && !on, role = Role.RadioButton) { onSelect(value) },
+                    .clickable(enabled = ok && !on, role = Role.RadioButton) {
+                        view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                        onSelect(value)
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -257,13 +263,19 @@ fun <T> Segmented(
 @Composable
 fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     val x by animateDpAsState(if (checked) 18.dp else 4.dp, Kit.fast(), label = "tx")
     val d by animateDpAsState(if (checked) 16.dp else 12.dp, Kit.fast(), label = "td")
     val track by animateColorAsState(if (checked) cs.primary else cs.surfaceContainerHighest, label = "tt")
     Box(
         Modifier.size(40.dp, 24.dp).clip(CircleShape).background(track)
             .then(if (checked) Modifier else Modifier.background(Color.Transparent))
-            .clickable(enabled = enabled, role = Role.Switch) { onChange(!checked) },
+            .clickable(enabled = enabled, role = Role.Switch) {
+                view.performHapticFeedback(
+                    if (checked) HapticFeedbackConstants.TOGGLE_OFF else HapticFeedbackConstants.TOGGLE_ON,
+                )
+                onChange(!checked)
+            },
     ) {
         Box(
             Modifier.offset(x = x, y = (24.dp - d) / 2).size(d).clip(CircleShape)
@@ -316,6 +328,7 @@ fun Slider(
     marker: Float? = null,
 ) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     val change by rememberUpdatedState(onChange)
     val commit by rememberUpdatedState(onCommit)
     var drag by remember { mutableFloatStateOf(Float.NaN) }
@@ -328,12 +341,23 @@ fun Slider(
     BoxWithConstraints(
         modifier.fillMaxWidth().height(height)
             .pointerInput(range, steps) {
-                detectTapGestures { o -> val v = snap(o.x / size.width); change(v); commit(v) }
+                detectTapGestures { o ->
+                    val v = snap(o.x / size.width)
+                    change(v)
+                    commit(v)
+                    view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                }
             }
             .pointerInput(range, steps) {
                 detectDragGestures(
                     onDragStart = { o -> drag = o.x / size.width; change(snap(drag)) },
-                    onDragEnd = { if (!drag.isNaN()) commit(snap(drag)); drag = Float.NaN },
+                    onDragEnd = {
+                        if (!drag.isNaN()) {
+                            commit(snap(drag))
+                            view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                        }
+                        drag = Float.NaN
+                    },
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
                     drag = (drag + d.x / size.width).coerceIn(0f, 1f)
@@ -384,6 +408,7 @@ fun RangeSlider(
     height: Dp = 24.dp,
 ) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     val change by rememberUpdatedState(onChange)
     val commit by rememberUpdatedState(onCommit)
     val lo by rememberUpdatedState(low)
@@ -403,13 +428,23 @@ fun RangeSlider(
                 detectTapGestures { o ->
                     val f = o.x / size.width
                     dragLow = pickLow(f)
-                    val (a, b) = move(index(f)); change(a, b); commit(a, b)
+                    val (a, b) = move(index(f))
+                    change(a, b)
+                    commit(a, b)
+                    view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                 }
             }
             .pointerInput(count) {
                 detectDragGestures(
                     onDragStart = { o -> drag = o.x / size.width; dragLow = pickLow(drag) },
-                    onDragEnd = { if (!drag.isNaN()) { val (a, b) = move(index(drag)); commit(a, b) }; drag = Float.NaN },
+                    onDragEnd = {
+                        if (!drag.isNaN()) {
+                            val (a, b) = move(index(drag))
+                            commit(a, b)
+                            view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
+                        }
+                        drag = Float.NaN
+                    },
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
                     drag = (drag + d.x / size.width).coerceIn(0f, 1f)

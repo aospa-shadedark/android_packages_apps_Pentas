@@ -34,14 +34,16 @@ fun Tuner(mode: Int) {
     val o = LocalOverlay.current
     val pkg = o.pkg ?: return
     val game = mode == SidebarMode.MODE_GAME
-    val tabs = if (game) TunerTab.entries else listOf(TunerTab.GRAPHICS, TunerTab.SOUND)
+    val tabs = if (game) listOf(TunerTab.PERF, TunerTab.GRAPHICS, TunerTab.TOUCH)
+        else listOf(TunerTab.GRAPHICS, TunerTab.SOUND)
     var tab by o.state.tunerTab
-    if (tab !in tabs) tab = tabs.first()
+    val soundPage = game && tab == TunerTab.SOUND
+    if (!soundPage && tab !in tabs) tab = tabs.first()
     Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(Kit.Gap)) {
-        PageHeader("Tuner", onBack = { o.state.home() }, back = R.drawable.sym_arrow_back)
-        Segmented(
+        PageHeader(if (soundPage) "Sound" else "Tuner", onBack = { o.state.home() }, back = R.drawable.sym_arrow_back)
+        if (!soundPage) Segmented(
             tabs.map { (if (it == TunerTab.GRAPHICS && !game) "Display" else it.label) to it },
-            selected = tab, onSelect = { tab = it },
+            selected = tab, onSelect = { o.state.tuner(it) },
         )
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),

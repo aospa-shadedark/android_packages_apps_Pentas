@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.UserHandle
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -126,6 +128,7 @@ private fun GameScreen(pkg: String, finish: () -> Unit) {
 @Composable
 private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish: () -> Unit) {
     val ctx = LocalContext.current
+    val view = LocalView.current
     val cs = MaterialTheme.colorScheme
     val pm = ctx.packageManager
     val info = remember { runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull() }
@@ -166,7 +169,10 @@ private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish
             }
             Text(
                 "Play", Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(cs.primary)
-                    .clickable { pm.getLaunchIntentForPackage(pkg)?.let(ctx::startActivity) }
+                    .clickable {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        pm.getLaunchIntentForPackage(pkg)?.let(ctx::startActivity)
+                    }
                     .padding(top = 13.dp),
                 style = label(16.sp, 600), color = cs.onPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
@@ -199,11 +205,15 @@ private fun Overview(pkg: String, deps: GameDeps, onOpen: (Part) -> Unit, finish
 @Composable
 private fun Choice(title: String, selected: Boolean, index: Int, count: Int, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     ListItem(
         title = title, shape = Kit.connected(index, count, 24.dp, 6.dp), selected = selected,
         modifier = Modifier.height(56.dp),
         trailing = if (selected) ({ Icon(Sym.Check, null, tint = cs.onSecondaryContainer) }) else null,
-        onClick = onClick,
+        onClick = {
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+            onClick()
+        },
     )
 }
 
