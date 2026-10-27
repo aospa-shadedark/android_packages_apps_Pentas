@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,6 +34,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -44,7 +46,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.yasvara.pentas.R
 import org.yasvara.pentas.audio.DolbyBridge
 import org.yasvara.pentas.audio.DolbyProfileClient
 import org.yasvara.pentas.data.AngleDriver
@@ -54,6 +60,7 @@ import org.yasvara.pentas.thermal.PerfTuner
 import org.yasvara.pentas.touch.KernelTouchFilterClient
 import org.yasvara.pentas.touch.RateMeter
 import org.yasvara.pentas.ui.kit.Block
+import org.yasvara.pentas.ui.kit.Glyph
 import org.yasvara.pentas.ui.kit.RangeSlider
 import org.yasvara.pentas.ui.kit.Section
 import org.yasvara.pentas.ui.kit.Segmented
@@ -61,6 +68,7 @@ import org.yasvara.pentas.ui.kit.SettingRow
 import org.yasvara.pentas.ui.kit.Slider
 import org.yasvara.pentas.ui.kit.SwitchRow
 import org.yasvara.pentas.ui.kit.Tag
+import org.yasvara.pentas.ui.kit.Toggle
 import org.yasvara.pentas.ui.kit.label
 import org.yasvara.pentas.ui.kit.num
 import kotlin.math.abs
@@ -504,29 +512,91 @@ fun SoundEditor(pkg: String?) {
     val ctx = LocalContext.current
     val dolby = rememberTuning().dolby()
     val st = dolby.state
-    if (!st.available) return
-    Block(padding = 10.dp) {
-        SwitchRow("Dolby Atmos", st.enabled, dolby::setEnabled)
-        Segmented(
-            listOf("Dynamic" to DolbyBridge.PROFILE_DYNAMIC, "Movie" to DolbyBridge.PROFILE_MOVIE,
-                "Music" to DolbyBridge.PROFILE_MUSIC, "Game" to DolbyBridge.PROFILE_GAME),
-            selected = st.profile, onSelect = dolby::setProfile,
-        )
+    val profileOptions = DolbyProfileClient.optionsFor(st.backend)
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(dolby) { dolby.refresh() }
+
+    Block(color = if (st.enabled && st.ready) cs.primaryContainer else cs.surfaceContainerHigh,
+        padding = 16.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
+                .background(if (st.enabled && st.ready) cs.primary else cs.surfaceContainer),
+                contentAlignment = Alignment.Center) {
+                Glyph(R.drawable.sym_graphic_eq,
+                    if (st.enabled && st.ready) cs.onPrimary else cs.onSurfaceVariant, 22.dp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Dolby Atmos", style = label(16.sp, 650), color = cs.onSurface)
+                Text(when {
+                    !st.available || !st.ready -> "Effect unavailable"
+                    st.enabled -> "On · ${profileOptions.firstOrNull { it.second == st.profile }?.first ?: "Profile"}"
+                    else -> "Off"
+                }, style = label(12.sp, 500),
+                    color = if (st.enabled && st.ready) cs.primary else cs.onSurfaceVariant)
+            }
+            Toggle(st.enabled && st.ready, dolby::setEnabled, enabled = st.ready, description = "Dolby Atmos")
+        }
+        Text("Controls the Dolby effect on supported audio routes.",
+            style = label(11.sp), color = cs.onSurfaceVariant)
     }
-    if (pkg == null) return
-    Block(padding = 10.dp) {
-        var mine by remember(pkg) { mutableIntStateOf(DolbyProfileClient.getProfile(ctx, pkg)) }
-        SettingRow("This game")
-        Segmented(
-            listOf("Global" to DolbyProfileClient.PROFILE_DEFAULT) +
-                (0..3).map { DolbyProfileClient.PROFILE_NAMES[it] to it },
-            selected = mine,
-            onSelect = {
-                mine = it
-                DolbyProfileClient.setProfile(ctx, pkg, it)
-                if (it >= 0) dolby.setProfile(it)
-            },
-        )
+
+    if (!st.available || !st.ready) {
+        Block {
+            Text(if (st.available) "Open Dolby settings to check the audio effect."
+                else "No supported Dolby app is installed.",
+                style = label(12.sp), color = cs.onSurfaceVariant)
+            if (st.available) {
+                Text("Open Dolby settings", Modifier.clickable { DolbyBridge.openSettings(ctx) },
+                    style = label(12.sp, 650), color = cs.primary)
+            }
+        }
+        return
+    }
+
+    Section(if (st.backend == DolbyBridge.Backend.LUNARIS) "Sound profile" else "Default profile")
+    Block {
+        Text(if (st.backend == DolbyBridge.Backend.LUNARIS) "Used across apps."
+            else "Used when this game has no assigned profile.",
+            style = label(11.sp), color = cs.onSurfaceVariant)
+        Segmented(profileOptions.take(3), st.homeProfile, dolby::setProfile)
+        Segmented(profileOptions.drop(3), st.homeProfile, dolby::setProfile)
+        Text("More sound controls", Modifier.clickable { DolbyBridge.openSettings(ctx) },
+            style = label(12.sp, 650), color = cs.primary)
+    }
+
+    if (pkg == null || st.backend != DolbyBridge.Backend.XIAOMI) return
+
+    var assignment by remember(pkg) { mutableStateOf(DolbyProfileClient.Assignment()) }
+    LaunchedEffect(pkg) {
+        assignment = withContext(Dispatchers.IO) { DolbyProfileClient.getProfile(ctx, pkg) }
+    }
+    Section("This game")
+    Block {
+        Text(if (assignment.monitoringEnabled) "Switch profile when this game is in front."
+            else "Automatic switching is off in Dolby settings.",
+            style = label(11.sp),
+            color = if (assignment.monitoringEnabled) cs.onSurfaceVariant else cs.error)
+        Segmented(listOf("Follow default" to DolbyProfileClient.PROFILE_DEFAULT) +
+            profileOptions.take(2), assignment.profile, onSelect = { selected ->
+                scope.launch {
+                    assignment = withContext(Dispatchers.IO) {
+                        DolbyProfileClient.setProfile(ctx, pkg, selected)
+                    }
+                }
+            })
+        Segmented(profileOptions.drop(2), assignment.profile, onSelect = { selected ->
+            scope.launch {
+                assignment = withContext(Dispatchers.IO) {
+                    DolbyProfileClient.setProfile(ctx, pkg, selected)
+                }
+            }
+        })
+        if (!assignment.monitoringEnabled) {
+            Text("Set up automatic profiles", Modifier.clickable { DolbyBridge.openSettings(ctx) },
+                style = label(12.sp, 650), color = cs.primary)
+        }
     }
 }
 

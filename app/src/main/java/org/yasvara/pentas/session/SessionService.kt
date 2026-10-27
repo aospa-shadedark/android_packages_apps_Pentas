@@ -24,8 +24,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import org.yasvara.pentas.audio.DolbyBridge
-import org.yasvara.pentas.audio.DolbyProfileClient
 import org.yasvara.pentas.charging.ChargingProfileRepository
 import org.yasvara.pentas.data.PerAppSettingStore
 import org.yasvara.pentas.data.SettingsIO
@@ -146,7 +144,6 @@ class SessionService : Hilt_SessionService() {
         step("calls") { calls.start() }
         step("call overlay") { callOverlay.start() }
         step("danmaku") { danmaku.start(pkg) }
-        step("dolby") { applyDolby(pkg) }
     }
 
     private fun stopGame(pkg: String?) {
@@ -188,15 +185,6 @@ class SessionService : Hilt_SessionService() {
         fps.reset()
         session.stop()
         publish(null, SidebarMode.MODE_NONE)
-    }
-
-    private fun applyDolby(pkg: String) {
-        if (!DolbyBridge.isAvailable(this)) return
-        val profile = DolbyProfileClient.getProfile(this, pkg)
-        if (profile >= 0) {
-            DolbyBridge.setEnabled(this, true)
-            DolbyBridge.setProfile(this, profile)
-        }
     }
 
     private fun recordStats(on: Boolean) {

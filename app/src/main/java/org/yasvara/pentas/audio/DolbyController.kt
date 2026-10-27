@@ -15,59 +15,75 @@ import androidx.compose.runtime.mutableStateOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
-/** Observable global Dolby state, shared by every surface that shows it. */
+/** Observable, live Dolby state shared by the overlay and game pages. */
 @Singleton
 class DolbyController @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    data class Snapshot(val available: Boolean, val enabled: Boolean, val profile: Int)
+    private val main = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val controlLock = Mutex()
+    private val initialBackend = DolbyBridge.backend(context)
+    private val _state = mutableStateOf(DolbyBridge.Status(
+        available = initialBackend != DolbyBridge.Backend.NONE,
+        backend = initialBackend,
+    ))
 
-    private val _state = mutableStateOf(
-        Snapshot(
-            available = DolbyBridge.isAvailable(context),
-            enabled = DolbyBridge.isEnabled(context),
-            profile = DolbyBridge.currentProfile(context),
-        )
-    )
-
-    /** Read this in a composition to subscribe; read [isAvailable] elsewhere. */
-    val state: Snapshot get() = _state.value
+    val state: DolbyBridge.Status get() = _state.value
     val isAvailable: Boolean get() = _state.value.available
     val enabledState: State<Boolean> = derivedStateOf { _state.value.enabled }
 
     init {
-        // Only worth observing when LunarisDolby is actually installed
-        if (_state.value.available) {
-            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean) = refresh()
+        val observer = object : ContentObserver(main) {
+            override fun onChange(selfChange: Boolean) = refresh()
+        }
+        when (_state.value.backend) {
+            DolbyBridge.Backend.XIAOMI -> context.contentResolver.registerContentObserver(
+                DolbyBridge.URI, false, observer)
+            DolbyBridge.Backend.LUNARIS -> {
+                context.contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(DolbyBridge.SETTINGS_DAP_ACTIVE), false, observer)
+                context.contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(DolbyBridge.SETTINGS_PROFILE_ACTIVE), false, observer)
             }
-            context.contentResolver.registerContentObserver(
-                Settings.Global.getUriFor(DolbyBridge.SETTINGS_DAP_ACTIVE), false, observer)
-            context.contentResolver.registerContentObserver(
-                Settings.Global.getUriFor(DolbyBridge.SETTINGS_PROFILE_ACTIVE), false, observer)
+            DolbyBridge.Backend.NONE -> Unit
+        }
+        if (_state.value.available) refresh()
+    }
+
+    fun refresh() {
+        scope.launch {
+            controlLock.withLock {
+                val status = DolbyBridge.status(context)
+                main.post { _state.value = status }
+            }
         }
     }
 
-    /** Reconcile from Settings.Global (observer + manual refresh). */
-    fun refresh() {
-        _state.value = _state.value.copy(
-            enabled = DolbyBridge.isEnabled(context),
-            profile = DolbyBridge.currentProfile(context),
-        )
-    }
-
     fun setEnabled(enabled: Boolean) {
-        _state.value = _state.value.copy(enabled = enabled)   // optimistic
-        DolbyBridge.setEnabled(context, enabled)
+        scope.launch {
+            controlLock.withLock {
+                val status = DolbyBridge.setEnabled(context, enabled)
+                main.post { _state.value = status }
+            }
+        }
     }
 
-    /** Selecting a profile also turns the DAP on, LunarisDolby-side. */
     fun setProfile(profile: Int) {
-        _state.value = _state.value.copy(enabled = true, profile = profile)
-        DolbyBridge.setProfile(context, profile)
+        scope.launch {
+            controlLock.withLock {
+                val status = DolbyBridge.setProfile(context, profile)
+                main.post { _state.value = status }
+            }
+        }
     }
 
-    /** Live global profile for non-Compose callers (session auto-apply). */
-    fun currentProfile(): Int = DolbyBridge.currentProfile(context)
+    fun currentProfile(): Int = _state.value.profile
 }
