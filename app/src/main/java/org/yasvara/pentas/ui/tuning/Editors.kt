@@ -164,6 +164,12 @@ fun ClockEditor(perf: PerfTuner, profile: PerfTuner.PerfProfile, editable: Boole
             delay(1500)
         }
     }
+    Text(
+        "Recommended: keep Default clocks. Changing limits can increase heat, drain or reduce performance; tune only for a specific reason.",
+        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        style = label(11.sp),
+        color = cs.onSurfaceVariant,
+    )
     Block(padding = 10.dp) {
         perf.cpuClusters.filter { it.availableKhz.size > 1 }.forEach { c ->
             val t = profile.clusters[c.policyIndex] ?: PerfTuner.ClusterTuning()

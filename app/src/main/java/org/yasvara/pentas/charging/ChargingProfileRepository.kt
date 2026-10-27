@@ -12,6 +12,7 @@ import org.yasvara.pentas.profile.DaemonContract
 import android.util.Log
 import org.yasvara.pentas.profile.DaemonProfileRepository
 import org.yasvara.pentas.thermal.ThermalProfiles
+import org.yasvara.pentas.device.DeviceSupport
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import javax.inject.Inject
@@ -42,20 +43,27 @@ class ChargingProfileRepository @Inject constructor(
     override fun deserialize(json: JSONObject): CustomChargingProfile? =
         runCatching { CustomChargingProfile.fromJson(json) }.getOrNull()
     override fun daemonPayload(profile: CustomChargingProfile): String =
-        profile.toDaemonJson().toString()
+        profile.copy(policy = supportedPolicy(profile.policy)).toDaemonJson().toString()
 
     /** Sensor roles and loop dynamics, written before the payload. */
     override fun preCommitProps(profile: CustomChargingProfile): Map<String, String> {
         // Custom tiers ignore config.max_fcc (sic.rs clamps custom to ABS), but
         // keep the prop consistent with the requested envelope so GLOBAL fallback
         // and logs agree. No envelope = vendor policy default 20 A, not ABS.
-        val ceilUa = profile.policy.envelope.fccMaxMa?.let { it * 1000L }
+        val policy = supportedPolicy(profile.policy)
+        val ceilUa = policy.envelope.fccMaxMa?.let { it * 1000L }
             ?: (ChargingEnvelope.POLICY_FCC_DEFAULT_MA * 1000L)
         return mapOf(
             ChargingProfiles.PROP_MODE to "custom",
             ThermalProfiles.PROP_MAX_FCC to ceilUa.toString(),
-        ) + profile.policy.dynamics.toProps()
+        ) + policy.dynamics.toProps()
     }
+
+    private fun supportedPolicy(policy: ChargingPolicy): ChargingPolicy =
+        if (DeviceSupport.bypassCharging) policy else policy.copy(
+            bypass = null,
+            dynamics = policy.dynamics.copy(netzero = false, netzeroTargetMa = 0),
+        )
 
     /** Rejects what the daemon would reject, so a profile never applies partially. */
     private fun validatePolicy(policy: ChargingPolicy): List<String> {

@@ -369,19 +369,17 @@ class ThermalController @Inject constructor(
 
     /** Bypass charging runs the system from the adapter with the pack held at 0 A. */
     private fun applyBypassCharging() {
+        if (!DeviceSupport.bypassCharging) return
+
         val bypass = Settings.System.getIntForUser(
             resolver, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT
         ) == 1
 
-        if (KernelNodeIO.exists(ThermalNodes.BYPASS_CHARGE)) {
-            KernelNodeIO.write(
-                ThermalNodes.BYPASS_CHARGE,
-                if (bypass) ThermalNodes.BYPASS_MODE_FORCE
-                else ThermalNodes.BYPASS_MODE_OFF
-            )
-        } else {
-            KernelNodeIO.write(ThermalNodes.SMART_NIGHT, bypass)
-        }
+        KernelNodeIO.write(
+            ThermalNodes.BYPASS_CHARGE,
+            if (bypass) ThermalNodes.BYPASS_MODE_FORCE
+            else ThermalNodes.BYPASS_MODE_OFF
+        )
     }
 
     // ── HBM (High Brightness Mode) ──────────────────────────────────────────

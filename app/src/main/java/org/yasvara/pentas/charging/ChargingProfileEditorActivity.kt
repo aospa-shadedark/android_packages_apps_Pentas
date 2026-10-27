@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.ui.settings.SettingsIntSliderRow
 import org.yasvara.pentas.ui.settings.SettingsValueSlider
 import org.yasvara.pentas.ui.theme.PentasTheme
+import org.yasvara.pentas.device.DeviceSupport
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -403,9 +404,13 @@ class ChargingProfileEditorActivity : Hilt_ChargingProfileEditorActivity() {
                     modifier = Modifier.padding(bottom = 10.dp),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ChargingPolicyPresets.Preset.entries.forEach { preset ->
-                        PolicyPresetChip(preset, Modifier.weight(1f))
-                    }
+                    ChargingPolicyPresets.Preset.entries
+                        .filter {
+                            DeviceSupport.bypassCharging || it != ChargingPolicyPresets.Preset.UNRESTRICTED
+                        }
+                        .forEach { preset ->
+                            PolicyPresetChip(preset, Modifier.weight(1f))
+                        }
                 }
 
                 if (vm.policy.isEmpty) {
@@ -438,7 +443,9 @@ class ChargingProfileEditorActivity : Hilt_ChargingProfileEditorActivity() {
                     label = "USB-PD input limit",
                     value = vm.policy.caps.inputMa["pd"] ?: 1600,
                     max = ChargingEnvelope.IIN_MAX_MA,
-                    hint = "Stock 1600 mA. Too low and bypass cannot carry the phone.",
+                    hint = if (DeviceSupport.bypassCharging) {
+                        "Stock 1600 mA. Too low and bypass cannot carry the phone."
+                    } else "Stock 1600 mA.",
                 ) { ma ->
                     vm.updatePolicy { p ->
                         p.copy(caps = p.caps.copy(inputMa = p.caps.inputMa + ("pd" to ma)))
@@ -446,7 +453,7 @@ class ChargingProfileEditorActivity : Hilt_ChargingProfileEditorActivity() {
                 }
 
                 Spacer(Modifier.height(10.dp))
-                BypassRow()
+                if (DeviceSupport.bypassCharging) BypassRow()
 
                 Spacer(Modifier.height(12.dp))
                 SensorRow()
@@ -468,7 +475,7 @@ class ChargingProfileEditorActivity : Hilt_ChargingProfileEditorActivity() {
         ) {
             Text(preset.label, style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold)
-            Text(preset.summary, style = MaterialTheme.typography.bodySmall,
+            Text(preset.summary(DeviceSupport.bypassCharging), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

@@ -13,6 +13,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import org.yasvara.pentas.device.DeviceSupport
 
 @HiltViewModel
 class ChargingProfileEditorViewModel @Inject constructor(
@@ -90,7 +91,7 @@ class ChargingProfileEditorViewModel @Inject constructor(
 
     /** Replace the whole policy from a named starting point. */
     fun applyPolicyPreset(preset: ChargingPolicyPresets.Preset) {
-        policy = preset.build()
+        policy = preset.build(DeviceSupport.bypassCharging)
         dirty = true
         refreshReadings()
         statusMessage = "${preset.label} policy loaded"

@@ -131,10 +131,19 @@ object ChargingPolicyPresets {
         MARATHON("Marathon", "Gaming: bypass first, hot bands open to 55 °C"),
         UNRESTRICTED("Unrestricted", "No thermal derate — full current to the safety envelope");
 
-        fun build(): ChargingPolicy = when (this) {
-            BALANCED -> balanced()
-            MARATHON -> marathon()
-            UNRESTRICTED -> unrestricted()
+        fun build(supportsBypass: Boolean = true): ChargingPolicy {
+            val policy = when (this) {
+                BALANCED -> balanced()
+                MARATHON -> marathon()
+                UNRESTRICTED -> unrestricted()
+            }
+            return if (supportsBypass) policy else policy.copy(
+                bypass = null,
+                dynamics = policy.dynamics.copy(netzero = false, netzeroTargetMa = 0),
+            )
         }
+
+        fun summary(supportsBypass: Boolean): String =
+            if (this == MARATHON && !supportsBypass) "Gaming thermal curve up to 55 °C" else summary
     }
 }

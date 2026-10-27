@@ -5,6 +5,8 @@
 package org.yasvara.pentas.device
 
 import android.os.SystemProperties
+import org.yasvara.pentas.thermal.KernelNodeIO
+import org.yasvara.pentas.thermal.ThermalNodes
 
 /** What the device ships beyond the stock vendor thermal stack. */
 object DeviceSupport {
@@ -14,4 +16,7 @@ object DeviceSupport {
      * leave the no-limits vendor config in place with no curve behind it.
      */
     val thermalDaemon: Boolean by lazy { SystemProperties.getBoolean("ro.pentas.thermal_daemon", false) }
+
+    /** Expose bypass charging only when the device provides its actual control node. */
+    val bypassCharging: Boolean by lazy { KernelNodeIO.exists(ThermalNodes.BYPASS_CHARGE) }
 }

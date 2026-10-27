@@ -64,14 +64,13 @@ import kotlin.math.abs
 import kotlinx.coroutines.delay
 import org.yasvara.pentas.R
 import org.yasvara.pentas.app.GameActivity
+import org.yasvara.pentas.device.DeviceSupport
 import org.yasvara.pentas.overlay.LocalOverlay
 import org.yasvara.pentas.overlay.Page
 import org.yasvara.pentas.overlay.TunerTab
 import org.yasvara.pentas.overlay.tiles.TileAction
 import org.yasvara.pentas.overlay.tiles.tilePainter
 import org.yasvara.pentas.session.SidebarMode
-import org.yasvara.pentas.thermal.KernelNodeIO
-import org.yasvara.pentas.thermal.ThermalNodes
 import org.yasvara.pentas.thermal.ThermalProfiles
 import org.yasvara.pentas.ui.kit.Glyph
 import org.yasvara.pentas.ui.kit.Kit
@@ -124,9 +123,9 @@ private fun Header() {
     val ctx = LocalContext.current
     val s by o.bus.snapshot.collectAsState()
     val cr = ctx.contentResolver
-    val canBypass = remember { KernelNodeIO.exists(ThermalNodes.BYPASS_CHARGE) }
+    val canBypass = DeviceSupport.bypassCharging
     var bypass by remember {
-        mutableStateOf(Settings.System.getIntForUser(cr, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT) == 1)
+        mutableStateOf(canBypass && Settings.System.getIntForUser(cr, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT) == 1)
     }
     Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(rememberClock(), style = num(13.sp, 560), color = cs.onSurface, modifier = Modifier.padding(start = 4.dp))

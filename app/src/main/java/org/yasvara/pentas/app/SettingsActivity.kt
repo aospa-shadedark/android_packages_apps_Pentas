@@ -9,6 +9,7 @@ import org.yasvara.pentas.ui.kit.Sym
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.UserHandle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -183,7 +184,7 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
                     else context.startActivity(Intent(context, GlobalActivity::class.java))
                 }
                 if (DeviceSupport.thermalDaemon) {
-                    ChargingCard(obs, Modifier.weight(1f)) { ChargingProfileListActivity.start(context) }
+                    ChargingCard(Modifier.weight(1f)) { ChargingProfileListActivity.start(context) }
                 }
             }
         }
@@ -463,20 +464,31 @@ private fun ThermalCard(name: String?, modifier: Modifier, onClick: () -> Unit) 
 
 @Composable
 private fun ChargingCard(
-    obs: org.yasvara.pentas.utils.ObservablePreferences,
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
     val cs = MaterialTheme.colorScheme
-    val bypass by remember { obs.booleanState("bypass_charge_enabled", false) }
+    val context = LocalContext.current
+    val resolver = context.contentResolver
+    val supportsBypass = DeviceSupport.bypassCharging
+    var bypass by remember(supportsBypass) {
+        mutableStateOf(supportsBypass && Settings.System.getIntForUser(
+            resolver, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT
+        ) == 1)
+    }
+    val chargingStatus = when {
+        !supportsBypass -> "Custom profiles"
+        bypass -> "Bypass on"
+        else -> "Bypass off"
+    }
     BentoCard(modifier.height(188.dp), onClick = onClick) {
         Column(Modifier.fillMaxSize()) {
-            CardLabel("Charging")
+            CardLabel(if (supportsBypass) "Charging" else "Charging curves")
             Spacer(Modifier.height(6.dp))
-            Text(if (bypass) "Bypass on" else "Bypass off", fontSize = 17.sp, color = cs.onSurface)
+            Text(chargingStatus, fontSize = 17.sp, color = cs.onSurface)
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Charger → SoC, and the battery dimmed when bypass skips it.
+                // Charger → SoC; dim the battery path only while bypass is active.
                 val active = cs.primary
                 val idle = cs.outlineVariant
                 Canvas(Modifier.weight(1f).height(48.dp)) {
@@ -495,8 +507,16 @@ private fun ChargingCard(
                         androidx.compose.ui.geometry.Size(w * 0.11f, h * 0.56f),
                         androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
                 }
-                Switch(checked = bypass,
-                    onCheckedChange = { obs.setBoolean("bypass_charge_enabled", false, it) })
+                if (supportsBypass) Switch(
+                    checked = bypass,
+                    onCheckedChange = {
+                        bypass = it
+                        Settings.System.putIntForUser(
+                            resolver, ThermalProfiles.KEY_BYPASS_CHARGING,
+                            if (it) 1 else 0, UserHandle.USER_CURRENT,
+                        )
+                    },
+                )
             }
         }
     }

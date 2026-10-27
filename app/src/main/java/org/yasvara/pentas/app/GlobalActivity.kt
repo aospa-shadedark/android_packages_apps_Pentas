@@ -31,9 +31,7 @@ import dagger.hilt.components.SingletonComponent
 import org.yasvara.pentas.charging.ChargingProfileListActivity
 import org.yasvara.pentas.charging.ChargingProfileRepository
 import org.yasvara.pentas.device.DeviceSupport
-import org.yasvara.pentas.thermal.KernelNodeIO
 import org.yasvara.pentas.thermal.PerfTuner
-import org.yasvara.pentas.thermal.ThermalNodes
 import org.yasvara.pentas.thermal.ThermalProfiles
 import org.yasvara.pentas.thermal.custom.CustomProfileListActivity
 import org.yasvara.pentas.ui.kit.Block
@@ -110,7 +108,7 @@ private fun Global(finish: () -> Unit) {
                 NavRow(Sym.Add, "Charging curves", null, ids.size, ids.size + 1) { ChargingProfileListActivity.start(ctx) }
             }
         }
-        if (remember { KernelNodeIO.exists(ThermalNodes.BYPASS_CHARGE) }) Block {
+        if (DeviceSupport.bypassCharging) Block {
             SwitchRow("Bypass charging", bypass, {
                 bypass = it
                 Settings.System.putIntForUser(cr, ThermalProfiles.KEY_BYPASS_CHARGING, if (it) 1 else 0, UserHandle.USER_CURRENT)

@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.yasvara.pentas.device.DeviceSupport
 import org.yasvara.pentas.thermal.KernelNodeIO
 import org.yasvara.pentas.thermal.ThermalNodes
 import org.yasvara.pentas.ui.kit.Block
@@ -72,7 +73,10 @@ private fun Map<String, String>.num(k: String, sane: LongRange) = this[k]?.trim(
 private fun readPack(): Pack {
     val b = uevent("battery")
     val u = uevent("usb")
-    val state = KernelNodeIO.read(ThermalNodes.BYPASS_STATE)?.trim()?.split(' ')?.mapNotNull { it.toIntOrNull() }.orEmpty()
+    val supportsBypass = DeviceSupport.bypassCharging
+    val state = if (supportsBypass) {
+        KernelNodeIO.read(ThermalNodes.BYPASS_STATE)?.trim()?.split(' ')?.mapNotNull { it.toIntOrNull() }.orEmpty()
+    } else emptyList()
     return Pack(
         capacity = b["CAPACITY"]?.trim()?.toIntOrNull() ?: 0,
         currentUa = -(b.num("CURRENT_NOW", -60_000_000L..60_000_000L) ?: 0L),
@@ -83,7 +87,7 @@ private fun readPack(): Pack {
         design = b.num("CHARGE_FULL_DESIGN", 0L..20_000_000L) ?: 0L,
         cycles = b["CYCLE_COUNT"]?.trim()?.toIntOrNull() ?: 0,
         adapter = if (u["ONLINE"]?.trim() == "1") "%s · %.1f V".format(u["TYPE"] ?: "USB", (u.num("VOLTAGE_NOW", 0L..25_000_000L) ?: 0L) / 1e6) else null,
-        bypassMode = KernelNodeIO.readInt(ThermalNodes.BYPASS_CHARGE) ?: 0,
+        bypassMode = if (supportsBypass) KernelNodeIO.readInt(ThermalNodes.BYPASS_CHARGE) ?: 0 else 0,
         bypassState = state.getOrElse(0) { 0 },
         bypassDrainMa = state.getOrElse(1) { 0 },
     )
@@ -123,7 +127,7 @@ fun BatteryPage() {
             PowerFlow(flow)
             p.adapter?.let { SettingRow("Adapter", value = it) }
         }
-        if (p.bypassMode != ThermalNodes.BYPASS_MODE_OFF) Block(padding = 10.dp) {
+        if (DeviceSupport.bypassCharging && p.bypassMode != ThermalNodes.BYPASS_MODE_OFF) Block(padding = 10.dp) {
             SettingRow("Bypass", value = when (p.bypassMode) { ThermalNodes.BYPASS_MODE_FORCE -> "Always"; else -> "Auto" })
             SettingRow("State", value = when (p.bypassState) {
                 ThermalNodes.BYPASS_ST_ACTIVE -> "Active"
