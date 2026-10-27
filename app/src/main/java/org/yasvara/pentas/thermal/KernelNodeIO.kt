@@ -26,6 +26,7 @@ object KernelNodeIO {
     private class NodeHandle(val path: String, val writable: Boolean) {
         var fd: FileDescriptor? = null
         var nextOpenAttemptMs = 0L
+        var openFailure: String? = null
         val buf = ByteArray(READ_BUF_SIZE)
 
         fun ensureOpen(): FileDescriptor? {
@@ -37,8 +38,10 @@ object KernelNodeIO {
                 Os.open(path, flags, 0).also {
                     fd = it
                     nextOpenAttemptMs = 0L
+                    openFailure = null
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                openFailure = e.toString()
                 // Missing/denied sysfs nodes must not be reopened on every telemetry tick.
                 nextOpenAttemptMs = now + OPEN_BACKOFF_MS
                 null
@@ -67,7 +70,8 @@ object KernelNodeIO {
         val handle = readHandles.getOrPut(path) { NodeHandle(path, writable = false) }
         synchronized(handle) {
             repeat(2) { attempt ->
-                val fd = handle.ensureOpen() ?: return failOnce(path, "open for read")
+                val fd = handle.ensureOpen()
+                    ?: return failOnce(path, "open for read: ${handle.openFailure}")
                 try {
                     val n = Os.pread(fd, handle.buf, 0, READ_BUF_SIZE, 0)
                     if (n <= 0) return null

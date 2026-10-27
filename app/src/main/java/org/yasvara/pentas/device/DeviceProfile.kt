@@ -33,6 +33,7 @@ data class GpuSpec(
     val devfreqMaxPath: String?,
     val governorPath: String?,
     val availableGovernorsPath: String?,
+    val busyPaths: List<String> = listOfNotNull(busyPercentPath),
 )
 
 data class DeviceProfile(
@@ -241,21 +242,23 @@ object DeviceProfiles {
     private fun scanGpu(): GpuSpec? {
         val kgsl = File("/sys/class/kgsl/kgsl-3d0")
         if (kgsl.exists()) {
-            // Vendor sepolicy labels only some kgsl nodes, so keep the ones this process can
-            // read. gpubusy ("busy total") is the labelled counterpart of gpu_busy_percentage.
-            val busy = listOf("gpubusy", "gpu_busy_percentage").map { File(kgsl, it) }.firstOrNull { it.canRead() }
+            // Keep both candidates: discovery is cached for the process lifetime, whereas
+            // access and driver availability can change. Telemetry tries each actual read.
+            val busyPaths = listOf("gpu_busy_percentage", "gpubusy")
+                .map { "${kgsl.absolutePath}/$it" }
             return GpuSpec(
                 baseDir = kgsl.absolutePath,
                 curFreqPaths = listOf(
                     "${kgsl.absolutePath}/gpuclk",
                     "${kgsl.absolutePath}/devfreq/cur_freq",
-                ).filter { File(it).canRead() },
-                busyPercentPath = busy?.absolutePath,
+                ),
+                busyPercentPath = busyPaths.first(),
                 availableFreqsPath = "${kgsl.absolutePath}/gpu_available_frequencies",
                 devfreqMinPath = "${kgsl.absolutePath}/devfreq/min_freq",
                 devfreqMaxPath = "${kgsl.absolutePath}/devfreq/max_freq",
                 governorPath = "${kgsl.absolutePath}/devfreq/governor",
                 availableGovernorsPath = "${kgsl.absolutePath}/devfreq/available_governors",
+                busyPaths = busyPaths,
             )
         }
 

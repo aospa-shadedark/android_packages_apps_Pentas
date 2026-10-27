@@ -569,6 +569,7 @@ private fun collectReport(context: Context): DiagReport {
         if (g != null) {
             info("Base dir", g.baseDir)
             info("Busy %", g.busyPercentPath ?: "none")
+            info("Busy candidates", g.busyPaths.joinToString())
             info("Governor", g.governorPath ?: "none")
             info("Available freqs", g.availableFreqsPath ?: "none")
         } else {

@@ -158,7 +158,7 @@ class TelemetryBus @Inject constructor(
 
         // GPU load / clock / ceiling.
         val gpu = profile.gpu
-        val gpuUsage = readGpuBusy(gpu?.busyPercentPath)
+        val gpuUsage = GpuTelemetry.readBusy(gpu?.busyPaths.orEmpty(), KernelNodeIO::read) ?: 0
         val gpuFreqMhz = readGpuFreqMhz(gpu)
         val gpuScalingMax = gpu?.devfreqMaxPath?.let { KernelNodeIO.readLong(it) } ?: 0L
         val gpuHwMax = gpuHwMaxHz(gpu)
@@ -291,36 +291,11 @@ class TelemetryBus @Inject constructor(
         for (p in paths) { val t = readTempC(p); if (t > m) m = t }   // 0/invalid never wins
         return m
     }
-    private fun readGpuBusy(path: String?): Int {
-        if (path == null) return 0
-        val t = KernelNodeIO.read(path)?.trim() ?: return 0
-        // Two possible formats, disambiguated by '%' — NOT by whitespace, since
-        // kgsl's percentage form ("47 %") also contains a space and was being
-        // misread as busy=47/total=1 → pinned to 100%.
-        //   kgsl gpu_busy_percentage: "nn %"       (a percentage)
-        //   devfreq gpu load:         "busy total" (two integers, no '%')
-        if (t.contains('%')) {
-            return t.substringBefore('%').trim().toIntOrNull()?.coerceIn(0, 100) ?: 0
-        }
-        val ps = t.split(WHITESPACE).filter { it.isNotEmpty() }
-        return if (ps.size >= 2) {
-            val b = ps[0].toLongOrNull() ?: 0L
-            val tot = ps[1].toLongOrNull() ?: 1L
-            ((b * 100) / tot.coerceAtLeast(1)).toInt().coerceIn(0, 100)
-        } else {
-            ps.firstOrNull()?.toIntOrNull()?.coerceIn(0, 100) ?: 0
-        }
-    }
     private fun readGpuFreqMhz(gpu: org.yasvara.pentas.device.GpuSpec?): Int {
         if (gpu == null) return 0
         for (p in gpu.curFreqPaths) {
             val raw = KernelNodeIO.readLong(p) ?: continue
-            if (raw <= 0) continue
-            return when {
-                raw > 1_000_000L -> (raw / 1_000_000L).toInt()   // Hz
-                raw > 1_000L -> (raw / 1_000L).toInt()           // kHz
-                else -> raw.toInt()
-            }
+            return GpuTelemetry.frequencyMhz(raw) ?: continue
         }
         return 0
     }
