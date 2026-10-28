@@ -19,20 +19,25 @@ import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.style.*
 import androidx.compose.ui.unit.*
+import androidx.compose.ui.platform.LocalDensity
 import kotlin.math.*
 
-// ── Color Palette (matching Scene app + gaming aesthetic) ──
-val ChartWhite = Color(0xFFE0E0E0)
-val ChartCyan = Color(0xFF00E5FF)
-val ChartMagenta = Color(0xFFE040FB)
-val ChartGreen = Color(0xFF00E676)
-val ChartOrange = Color(0xFFFF9100)
-val ChartRed = Color(0xFFFF5252)
-val ChartBlue = Color(0xFF448AFF)
-val ChartCardBg = Color(0xFF1A1B2E)
-val ChartCardBorder = Color(0xFF2A2B3E)
-val ChartGridLine = Color(0xFF2A2B3E)
-val ChartTextDim = Color(0xFF808090)
+// Series retain distinct colors while surfaces follow the app theme.
+val ChartWhite: Color @Composable get() = MaterialTheme.colorScheme.onSurface
+val ChartCyan: Color @Composable get() = chartSeriesColor(Color(0xFF00E5FF), Color(0xFF006874))
+val ChartMagenta: Color @Composable get() = chartSeriesColor(Color(0xFFE040FB), Color(0xFF8F269F))
+val ChartGreen: Color @Composable get() = chartSeriesColor(Color(0xFF00E676), Color(0xFF006D3B))
+val ChartOrange: Color @Composable get() = chartSeriesColor(Color(0xFFFF9100), Color(0xFF944700))
+val ChartRed: Color @Composable get() = chartSeriesColor(Color(0xFFFF5252), Color(0xFFBA1A1A))
+val ChartBlue: Color @Composable get() = chartSeriesColor(Color(0xFF448AFF), Color(0xFF004FAD))
+val ChartCardBg: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainer
+val ChartCardBorder: Color @Composable get() = MaterialTheme.colorScheme.outlineVariant
+val ChartGridLine: Color @Composable get() = MaterialTheme.colorScheme.outlineVariant
+val ChartTextDim: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+@Composable
+private fun chartSeriesColor(dark: Color, light: Color): Color =
+    if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) dark else light
 
 // ── Data classes for chart input ──
 
@@ -87,6 +92,7 @@ fun ChartCard(
 
 // ── Multi-Line Time Series Chart ──
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TimeSeriesChart(
     lines: List<ChartLine>,
@@ -102,6 +108,8 @@ fun TimeSeriesChart(
     modifier: Modifier = Modifier,
 ) {
     val textMeasurer = rememberTextMeasurer()
+    val gridColor = ChartGridLine
+    val textColor = ChartTextDim
 
     Column(modifier = modifier.fillMaxWidth()) {
         Canvas(
@@ -125,7 +133,7 @@ fun TimeSeriesChart(
 
                 // Dashed grid line
                 drawLine(
-                    color = ChartGridLine,
+                    color = gridColor,
                     start = Offset(leftMargin, y),
                     end = Offset(leftMargin + chartWidth, y),
                     strokeWidth = 0.5f,
@@ -139,7 +147,7 @@ fun TimeSeriesChart(
                     text = label,
                     topLeft = Offset(2.dp.toPx(), y - 6.dp.toPx()),
                     style = TextStyle(
-                        color = ChartTextDim,
+                        color = textColor,
                         fontSize = 9.sp,
                     ),
                 )
@@ -157,7 +165,7 @@ fun TimeSeriesChart(
                         text = label,
                         topLeft = Offset(leftMargin + chartWidth + 4.dp.toPx(), y - 6.dp.toPx()),
                         style = TextStyle(
-                            color = ChartTextDim,
+                            color = textColor,
                             fontSize = 9.sp,
                         ),
                     )
@@ -175,13 +183,13 @@ fun TimeSeriesChart(
                     text = label,
                     topLeft = Offset(x - 8.dp.toPx(), size.height - 14.dp.toPx()),
                     style = TextStyle(
-                        color = ChartTextDim,
+                        color = textColor,
                         fontSize = 9.sp,
                     ),
                 )
                 // Vertical grid line
                 drawLine(
-                    color = ChartGridLine,
+                    color = gridColor,
                     start = Offset(x, topMargin),
                     end = Offset(x, topMargin + chartHeight),
                     strokeWidth = 0.5f,
@@ -204,9 +212,10 @@ fun TimeSeriesChart(
         if (showLegend) {
             Spacer(modifier = Modifier.height(6.dp))
             val allLines = lines + rightAxisLines
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 allLines.forEach { line ->
                     Row(
@@ -282,6 +291,8 @@ fun BarChart(
     modifier: Modifier = Modifier,
 ) {
     val textMeasurer = rememberTextMeasurer()
+    val gridColor = ChartGridLine
+    val textColor = ChartTextDim
     val actualYMax = if (yMax > 0f) yMax else (values.maxOrNull() ?: 1f) * 1.2f
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -308,7 +319,7 @@ fun BarChart(
                 val y = topMargin + chartHeight * (1f - i / 4f)
                 val value = actualYMax * i / 4f
                 drawLine(
-                    color = ChartGridLine,
+                    color = gridColor,
                     start = Offset(leftMargin, y),
                     end = Offset(leftMargin + chartWidth, y),
                     strokeWidth = 0.5f,
@@ -318,7 +329,7 @@ fun BarChart(
                     textMeasurer = textMeasurer,
                     text = "%.0f".format(value),
                     topLeft = Offset(2.dp.toPx(), y - 6.dp.toPx()),
-                    style = TextStyle(color = ChartTextDim, fontSize = 9.sp),
+                    style = TextStyle(color = textColor, fontSize = 9.sp),
                 )
             }
 
@@ -346,7 +357,7 @@ fun BarChart(
                     textMeasurer = textMeasurer,
                     text = "${timeSec}s",
                     topLeft = Offset(x - 8.dp.toPx(), size.height - 14.dp.toPx()),
-                    style = TextStyle(color = ChartTextDim, fontSize = 9.sp),
+                    style = TextStyle(color = textColor, fontSize = 9.sp),
                 )
             }
         }
@@ -364,37 +375,43 @@ fun BarChart(
 
 // ── Stats Summary Card ──
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StatsSummaryCard(
     stats: List<Pair<String, Pair<String, Color>>>,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        stats.forEach { (label, valuePair) ->
-            val (value, color) = valuePair
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = label,
-                    color = ChartTextDim,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = value,
-                    color = color,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(modifier = Modifier.height(1.dp))
-                Text(
-                    text = label.substringAfterLast(" ").uppercase(),
-                    color = ChartTextDim,
-                    fontSize = 9.sp,
-                )
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.25f) 2 else 4
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            maxItemsInEachRow = columns,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            stats.forEach { (label, valuePair) ->
+                val (value, color) = valuePair
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = label,
+                        color = ChartTextDim,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = value,
+                        color = color,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = label.substringAfterLast(" ").uppercase(),
+                        color = ChartTextDim,
+                        fontSize = 9.sp,
+                    )
+                }
             }
         }
     }
@@ -421,7 +438,7 @@ fun ThreadStatsRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = threadName,
                     color = ChartWhite,
@@ -429,7 +446,7 @@ fun ThreadStatsRow(
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 150.dp),
+                    modifier = Modifier.weight(1f),
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
@@ -438,12 +455,12 @@ fun ThreadStatsRow(
                     fontSize = 11.sp,
                 )
             }
-            Text(
-                text = "AVG:%.1f%%  MAX:%.1f%%".format(avgPercent, maxPercent),
-                color = ChartTextDim,
-                fontSize = 11.sp,
-            )
         }
+        Text(
+            text = "AVG:%.1f%%  MAX:%.1f%%".format(avgPercent, maxPercent),
+            color = ChartTextDim,
+            fontSize = 11.sp,
+        )
 
         if (history.size > 1) {
             Spacer(modifier = Modifier.height(2.dp))
@@ -494,16 +511,16 @@ fun DeviceInfoCard(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
-        DeviceInfoItem("Platform", platform)
-        DeviceInfoItem("Model", model)
-        DeviceInfoItem("OS", osVersion)
-        DeviceInfoItem("Profile", profile)
+        DeviceInfoItem("Platform", platform, Modifier.weight(1f))
+        DeviceInfoItem("Model", model, Modifier.weight(1f))
+        DeviceInfoItem("OS", osVersion, Modifier.weight(1f))
+        DeviceInfoItem("Profile", profile, Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun DeviceInfoItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun DeviceInfoItem(label: String, value: String, modifier: Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
             color = ChartTextDim,
@@ -531,6 +548,11 @@ fun FrameTimeHistogram(
     modifier: Modifier = Modifier,
 ) {
     val textMeasurer = rememberTextMeasurer()
+    val gridColor = ChartGridLine
+    val textColor = ChartTextDim
+    val normalColor = ChartCyan
+    val slowColor = ChartOrange
+    val jankColor = ChartRed
     val targetFrameTimeMs = 1000f / targetFps
 
     // Build histogram buckets
@@ -565,7 +587,7 @@ fun FrameTimeHistogram(
                 val y = topMargin + chartHeight * (1f - i / 4f)
                 val value = maxCount * i / 4
                 drawLine(
-                    color = ChartGridLine,
+                    color = gridColor,
                     start = Offset(leftMargin, y),
                     end = Offset(leftMargin + chartWidth, y),
                     strokeWidth = 0.5f,
@@ -575,7 +597,7 @@ fun FrameTimeHistogram(
                     textMeasurer = textMeasurer,
                     text = "$value",
                     topLeft = Offset(2.dp.toPx(), y - 6.dp.toPx()),
-                    style = TextStyle(color = ChartTextDim, fontSize = 9.sp),
+                    style = TextStyle(color = textColor, fontSize = 9.sp),
                 )
             }
 
@@ -587,9 +609,9 @@ fun FrameTimeHistogram(
 
                 // Color: cyan for normal, red for > 2× target, orange for > target
                 val color = when {
-                    i < bucketBoundaries.size && bucketBoundaries[i] > targetFrameTimeMs * 2 -> ChartRed
-                    i < bucketBoundaries.size && bucketBoundaries[i] > targetFrameTimeMs -> ChartOrange
-                    else -> ChartCyan
+                    i < bucketBoundaries.size && bucketBoundaries[i] > targetFrameTimeMs * 2 -> jankColor
+                    i < bucketBoundaries.size && bucketBoundaries[i] > targetFrameTimeMs -> slowColor
+                    else -> normalColor
                 }
 
                 drawRoundRect(
@@ -609,7 +631,7 @@ fun FrameTimeHistogram(
                         textMeasurer = textMeasurer,
                         text = "${bucketBoundaries[idx].toInt()}ms",
                         topLeft = Offset(x - 4.dp.toPx(), size.height - 14.dp.toPx()),
-                        style = TextStyle(color = ChartTextDim, fontSize = 8.sp),
+                        style = TextStyle(color = textColor, fontSize = 8.sp),
                     )
                 }
             }

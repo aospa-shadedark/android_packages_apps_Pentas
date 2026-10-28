@@ -11,8 +11,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemProperties
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -35,6 +37,10 @@ import org.yasvara.pentas.data.fpsstats.SessionListItem
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
+import org.yasvara.pentas.ui.theme.PentasTheme
+import org.yasvara.pentas.app.pressable
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 
 @AndroidEntryPoint(ComponentActivity::class)
 class FpsStatsActivity : Hilt_FpsStatsActivity() {
@@ -42,16 +48,11 @@ class FpsStatsActivity : Hilt_FpsStatsActivity() {
     @Inject lateinit var repository: FpsStatsRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    background = Color(0xFF0D0E1A),
-                    surface = ChartCardBg,
-                    primary = ChartCyan,
-                ),
-            ) {
+            PentasTheme {
                 FpsStatsListScreen(
                     repository = repository,
                     onBack = { finish() },
@@ -77,14 +78,36 @@ fun FpsStatsListScreen(
     packageManager: PackageManager,
 ) {
     var sessions by remember { mutableStateOf(repository.listSessions()) }
+    var pendingDelete by remember { mutableStateOf<SessionListItem?>(null) }
+    val view = LocalView.current
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { sessions = repository.listSessions() }
+
+    pendingDelete?.let { session ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete session?") },
+            text = { Text("Delete the recording for ${session.appName}? This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    repository.deleteSession(session.id)
+                    sessions = repository.listSessions()
+                    pendingDelete = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
 
     Scaffold(
-        containerColor = Color(0xFF0D0E1A),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "FPS Stats",
+                        "Sessions",
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,
                     )
@@ -98,7 +121,7 @@ fun FpsStatsListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF0D0E1A),
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = ChartWhite,
                     navigationIconContentColor = ChartWhite,
                 ),
@@ -145,10 +168,7 @@ fun FpsStatsListScreen(
                         session = session,
                         packageManager = packageManager,
                         onClick = { onSessionClick(session.id) },
-                        onDelete = {
-                            repository.deleteSession(session.id)
-                            sessions = repository.listSessions()
-                        },
+                        onDelete = { pendingDelete = session },
                     )
                 }
             }
@@ -159,6 +179,7 @@ fun FpsStatsListScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SessionRow(
     session: SessionListItem,
@@ -166,6 +187,7 @@ fun SessionRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val view = LocalView.current
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val dayFormat = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val today = remember { dayFormat.format(Date()) }
@@ -182,9 +204,9 @@ fun SessionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .pressable(onClick)
             .background(ChartCardBg, RoundedCornerShape(12.dp))
             .border(0.5.dp, ChartCardBorder, RoundedCornerShape(12.dp))
-            .clickable { onClick() }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -221,11 +243,11 @@ fun SessionRow(
                 if (isToday) {
                     Text(
                         text = "today",
-                        color = Color.Black,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier
-                            .background(ChartCyan, RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
                             .padding(horizontal = 4.dp, vertical = 1.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -240,20 +262,18 @@ fun SessionRow(
                 )
             }
             Spacer(modifier = Modifier.height(2.dp))
-            Row {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = dateFormat.format(Date(session.startTimeMs)),
                     color = ChartTextDim,
                     fontSize = 11.sp,
                 )
-                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "%.1f".format(session.fpsAvg),
                     color = ChartCyan,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                 )
-                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "%.2fW".format(session.powerAvgW),
                     color = ChartTextDim,
@@ -273,8 +293,11 @@ fun SessionRow(
 
         // Delete button
         IconButton(
-            onClick = onDelete,
-            modifier = Modifier.size(32.dp),
+            onClick = {
+                view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                onDelete()
+            },
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(
                 Sym.Delete,

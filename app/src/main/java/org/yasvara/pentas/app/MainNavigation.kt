@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -34,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +44,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.R
@@ -72,13 +76,18 @@ private enum class MainTab(val title: String, val icon: Int) {
 @Composable
 fun PentasMain() {
     var tab by rememberSaveable { mutableStateOf(MainTab.GAMES) }
+    val tabState = rememberSaveableStateHolder()
+    var cachedGames by remember { mutableStateOf(emptyList<String>()) }
+    var cachedSessions by remember { mutableStateOf(emptyList<SessionListItem>()) }
     BackHandler(tab != MainTab.GAMES) { tab = MainTab.GAMES }
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Box(Modifier.weight(1f)) {
-            when (tab) {
-                MainTab.GAMES -> Library()
-                MainTab.SESSIONS -> SessionsTab()
-                MainTab.SETTINGS -> PentasSettingsScreen(onBack = { tab = MainTab.GAMES }, showBack = false)
+            tabState.SaveableStateProvider(tab.name) {
+                when (tab) {
+                    MainTab.GAMES -> Library(cachedGames) { cachedGames = it }
+                    MainTab.SESSIONS -> SessionsTab(cachedSessions) { cachedSessions = it }
+                    MainTab.SETTINGS -> PentasSettingsScreen(onBack = { tab = MainTab.GAMES }, showBack = false)
+                }
             }
         }
         MainNavigationBar(tab) { tab = it }
@@ -104,7 +113,7 @@ private fun MainNavigationBar(selected: MainTab, onSelect: (MainTab) -> Unit) {
                 if (active) cs.secondaryContainer else cs.surfaceContainerLow, label = "navigation color")
             val foreground = if (active) cs.onSecondaryContainer else cs.onSurfaceVariant
             Column(
-                Modifier.weight(1f).height(58.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+                Modifier.weight(1f).heightIn(min = 58.dp).graphicsLayer { scaleX = scale; scaleY = scale }
                     .clip(RoundedCornerShape(22.dp)).background(background)
                     .selectable(selected = active, role = Role.Tab,
                         interactionSource = interaction, indication = null) {
@@ -112,7 +121,7 @@ private fun MainNavigationBar(selected: MainTab, onSelect: (MainTab) -> Unit) {
                             view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
                             onSelect(tab)
                         }
-                    },
+                    }.padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
@@ -125,15 +134,16 @@ private fun MainNavigationBar(selected: MainTab, onSelect: (MainTab) -> Unit) {
 }
 
 @Composable
-private fun SessionsTab() {
+private fun SessionsTab(cachedSessions: List<SessionListItem>, onLoaded: (List<SessionListItem>) -> Unit) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     var rev by rememberSaveable { mutableStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { rev++ }
-    val sessions by produceState(emptyList<SessionListItem>(), rev) {
+    val sessions by produceState(cachedSessions, rev) {
         value = withContext(Dispatchers.IO) {
             FpsStatsRepository(ctx.applicationContext).listSessions()
         }
+        onLoaded(value)
     }
     val recent = sessions.sortedByDescending { it.startTimeMs }
     Screen("Sessions", onBack = null, bottomBar = true) {
@@ -152,8 +162,8 @@ private fun SessionsTab() {
         } else {
             val last = recent.first()
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(cs.primaryContainer)
-                    .clickable { openSession(ctx, last) }.padding(20.dp),
+                Modifier.fillMaxWidth().pressable { openSession(ctx, last) }
+                    .clip(RoundedCornerShape(28.dp)).background(cs.primaryContainer).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text("LAST SESSION", style = label(11.sp, 650), color = cs.onPrimaryContainer)
@@ -170,8 +180,8 @@ private fun SessionsTab() {
                 modifier = Modifier.padding(start = 4.dp, top = 12.dp))
             recent.take(4).forEach { session ->
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer)
-                        .clickable { openSession(ctx, session) }.padding(16.dp),
+                    Modifier.fillMaxWidth().pressable { openSession(ctx, session) }
+                        .clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -186,8 +196,8 @@ private fun SessionsTab() {
                 }
             }
             if (recent.size > 4) Text("View all ${recent.size} sessions",
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(cs.secondaryContainer)
-                    .clickable { ctx.startActivity(Intent(ctx, FpsStatsActivity::class.java)) }.padding(16.dp),
+                Modifier.fillMaxWidth().pressable { ctx.startActivity(Intent(ctx, FpsStatsActivity::class.java)) }
+                    .clip(RoundedCornerShape(18.dp)).background(cs.secondaryContainer).padding(16.dp),
                 style = label(14.sp, 600), color = cs.onSecondaryContainer)
         }
     }
@@ -236,7 +246,9 @@ private fun WeekActivity(sessions: List<SessionListItem>) {
         if (total > 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val max = days.maxOf { it.second }.coerceAtLeast(1)
             days.forEach { (name, seconds) ->
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
+                Column(Modifier.weight(1f).clearAndSetSemantics {
+                    contentDescription = "$name: ${if (seconds > 0) duration(seconds) else "No play time"}"
+                }, horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(Modifier.fillMaxWidth().height(88.dp), contentAlignment = Alignment.BottomCenter) {
                         Box(Modifier.width(18.dp).height((seconds * 88f / max).coerceAtLeast(if (seconds > 0) 4f else 0f).dp)

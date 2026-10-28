@@ -9,6 +9,7 @@ import org.yasvara.pentas.ui.kit.Sym
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.*
@@ -26,6 +27,7 @@ import org.yasvara.pentas.data.fpsstats.ThreadSnapshot
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
+import org.yasvara.pentas.ui.theme.PentasTheme
 
 @AndroidEntryPoint(ComponentActivity::class)
 class FpsStatsDetailActivity : Hilt_FpsStatsDetailActivity() {
@@ -33,6 +35,7 @@ class FpsStatsDetailActivity : Hilt_FpsStatsDetailActivity() {
     @Inject lateinit var repository: FpsStatsRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         val sessionId = intent.getStringExtra("session_id") ?: run {
@@ -41,13 +44,7 @@ class FpsStatsDetailActivity : Hilt_FpsStatsDetailActivity() {
         }
 
         setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    background = Color(0xFF0D0E1A),
-                    surface = ChartCardBg,
-                    primary = ChartCyan,
-                ),
-            ) {
+            PentasTheme {
                 val session = remember { repository.loadSession(sessionId) }
                 if (session != null) {
                     FpsStatsDetailScreen(
@@ -56,7 +53,7 @@ class FpsStatsDetailActivity : Hilt_FpsStatsDetailActivity() {
                     )
                 } else {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text("Session not found", color = ChartWhite)
@@ -77,7 +74,7 @@ fun FpsStatsDetailScreen(
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
 
     Scaffold(
-        containerColor = Color(0xFF0D0E1A),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -98,7 +95,7 @@ fun FpsStatsDetailScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF0D0E1A),
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = ChartWhite,
                     navigationIconContentColor = ChartWhite,
                 ),

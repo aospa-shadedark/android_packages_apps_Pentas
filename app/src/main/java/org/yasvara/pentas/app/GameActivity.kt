@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -196,12 +197,12 @@ private fun Overview(
                 }
             }
             Text(
-                "Play", Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(cs.primary)
+                "Play", Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(CircleShape).background(cs.primary)
                     .clickable {
                         view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                         pm.getLaunchIntentForPackage(pkg)?.let(ctx::startActivity)
                     }
-                    .padding(top = 13.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 style = label(16.sp, 600), color = cs.onPrimary, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
@@ -236,7 +237,7 @@ private fun Choice(title: String, selected: Boolean, index: Int, count: Int, onC
     val view = LocalView.current
     ListItem(
         title = title, shape = Kit.connected(index, count, 24.dp, 6.dp), selected = selected,
-        modifier = Modifier.height(56.dp),
+        modifier = Modifier.heightIn(min = 56.dp),
         trailing = if (selected) ({ Icon(Sym.Check, null, tint = cs.onSecondaryContainer) }) else null,
         onClick = {
             view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)

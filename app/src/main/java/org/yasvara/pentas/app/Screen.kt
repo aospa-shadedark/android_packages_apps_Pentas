@@ -5,7 +5,11 @@
 package org.yasvara.pentas.app
 
 import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,10 +29,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.R
@@ -35,6 +44,19 @@ import org.yasvara.pentas.ui.kit.Kit
 import org.yasvara.pentas.ui.kit.ListItem
 import org.yasvara.pentas.ui.kit.RoundButton
 import org.yasvara.pentas.ui.kit.label
+
+@Composable
+internal fun Modifier.pressable(onClick: () -> Unit): Modifier {
+    val view = LocalView.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.98f else 1f, label = "card press")
+    return graphicsLayer { scaleX = scale; scaleY = scale }
+        .clickable(interactionSource = interaction, indication = null, role = Role.Button) {
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+            onClick()
+        }
+}
 
 /** App screen scaffold: back, large title, actions, scrolling content on pure background. */
 @Composable
@@ -74,7 +96,7 @@ fun NavRow(icon: ImageVector, title: String, value: String?, index: Int, count: 
     val view = LocalView.current
     ListItem(
         title = title, subtitle = value, shape = Kit.connected(index, count, 24.dp, 6.dp),
-        modifier = Modifier.height(64.dp),
+        modifier = Modifier.heightIn(min = 64.dp),
         leading = { Icon(icon, null, tint = cs.primary) },
         trailing = { Icon(org.yasvara.pentas.ui.kit.Sym.KeyboardArrowRight, null, tint = cs.onSurfaceVariant) },
         onClick = {

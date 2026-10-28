@@ -11,6 +11,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.UserHandle
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,6 +26,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -44,6 +48,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -59,6 +64,7 @@ import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -73,12 +79,17 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.yasvara.pentas.charging.ChargingProfileListActivity
@@ -147,7 +158,9 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
     val context = LocalContext.current
     val appSettings = remember { AppSettings(context.applicationContext) }
     val obs = appSettings.observable
-    val overview by produceState<Overview?>(null) {
+    var revision by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { revision++ }
+    val overview by produceState<Overview?>(null, revision) {
         value = withContext(Dispatchers.IO) { loadOverview(context.applicationContext) }
     }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -168,7 +181,7 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            Hero(appSettings)
+            Hero(appSettings, revision)
         }
 
         item { SectionLabel("Library") }
@@ -184,7 +197,7 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
                     else context.startActivity(Intent(context, GlobalActivity::class.java))
                 }
                 if (DeviceSupport.thermalDaemon) {
-                    ChargingCard(Modifier.weight(1f)) { ChargingProfileListActivity.start(context) }
+                    ChargingCard(Modifier.weight(1f), revision) { ChargingProfileListActivity.start(context) }
                 }
             }
         }
@@ -243,7 +256,7 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun Hero(appSettings: AppSettings) {
+private fun Hero(appSettings: AppSettings, refreshKey: Int) {
     val cs = MaterialTheme.colorScheme
     val context = LocalContext.current
     Box(
@@ -266,7 +279,7 @@ private fun Hero(appSettings: AppSettings) {
             Spacer(Modifier.height(22.dp))
             SidebarPlacement(appSettings, Modifier.align(Alignment.CenterHorizontally))
             Spacer(Modifier.height(10.dp))
-            val live = remember {
+            val live = remember(refreshKey) {
                 Settings.System.getString(context.contentResolver, "pentas_session_live")
                     ?.takeIf { it.isNotEmpty() }
                     ?.let { pkg -> runCatching {
@@ -294,7 +307,7 @@ private fun SidebarPlacement(appSettings: AppSettings, modifier: Modifier) {
     val fraction = (appSettings.y.toFloat() / shortSide).coerceIn(0f, 0.85f)
     val onLeft = appSettings.x < longSide / 2
     Box(
-        modifier.width(300.dp).aspectRatio(2.1f).clip(RoundedCornerShape(22.dp))
+        modifier.widthIn(max = 300.dp).fillMaxWidth().aspectRatio(2.1f).clip(RoundedCornerShape(22.dp))
             .border(3.dp, cs.surfaceContainerHighest, RoundedCornerShape(22.dp))
             .background(Color.Black)
     ) {
@@ -331,6 +344,7 @@ private fun BentoCard(
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val view = LocalView.current
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val radius by animateDpAsState(if (pressed) 16.dp else 28.dp,
@@ -340,7 +354,10 @@ private fun BentoCard(
     Box(
         modifier.scale(scale).clip(RoundedCornerShape(radius)).background(container)
             .clickable(interactionSource = source, indication = null, role = Role.Button,
-                onClick = onClick)
+                onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                    onClick()
+                })
             .padding(20.dp)
     ) { content() }
 }
@@ -436,8 +453,8 @@ private fun SessionsCard(overview: Overview?, onClick: () -> Unit) {
 @Composable
 private fun ThermalCard(name: String?, modifier: Modifier, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    BentoCard(modifier.height(188.dp), onClick = onClick) {
-        Column(Modifier.fillMaxSize()) {
+    BentoCard(modifier.heightIn(min = 188.dp), onClick = onClick) {
+        Column(Modifier.fillMaxWidth().heightIn(min = 148.dp)) {
             CardLabel("Thermal")
             Spacer(Modifier.height(6.dp))
             Text(name ?: "–", fontSize = 17.sp, color = cs.onSurface, maxLines = 2,
@@ -465,13 +482,15 @@ private fun ThermalCard(name: String?, modifier: Modifier, onClick: () -> Unit) 
 @Composable
 private fun ChargingCard(
     modifier: Modifier,
+    refreshKey: Int,
     onClick: () -> Unit,
 ) {
     val cs = MaterialTheme.colorScheme
     val context = LocalContext.current
     val resolver = context.contentResolver
     val supportsBypass = DeviceSupport.bypassCharging
-    var bypass by remember(supportsBypass) {
+    val view = LocalView.current
+    var bypass by remember(supportsBypass, refreshKey) {
         mutableStateOf(supportsBypass && Settings.System.getIntForUser(
             resolver, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT
         ) == 1)
@@ -481,8 +500,8 @@ private fun ChargingCard(
         bypass -> "Bypass on"
         else -> "Bypass off"
     }
-    BentoCard(modifier.height(188.dp), onClick = onClick) {
-        Column(Modifier.fillMaxSize()) {
+    BentoCard(modifier.heightIn(min = 188.dp), onClick = onClick) {
+        Column(Modifier.fillMaxWidth().heightIn(min = 148.dp)) {
             CardLabel(if (supportsBypass) "Charging" else "Charging curves")
             Spacer(Modifier.height(6.dp))
             Text(chargingStatus, fontSize = 17.sp, color = cs.onSurface)
@@ -509,7 +528,9 @@ private fun ChargingCard(
                 }
                 if (supportsBypass) Switch(
                     checked = bypass,
+                    modifier = Modifier.semantics { contentDescription = "Bypass charging" },
                     onCheckedChange = {
+                        view.performHapticFeedback(if (it) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF)
                         bypass = it
                         Settings.System.putIntForUser(
                             resolver, ThermalProfiles.KEY_BYPASS_CHARGING,
@@ -546,14 +567,13 @@ private fun Group(content: @Composable () -> Unit) =
 @Composable
 private fun RowShell(
     position: Position,
-    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val base = Modifier.fillMaxWidth().heightIn(min = 72.dp).clip(position.shape())
+    val base = modifier.fillMaxWidth().heightIn(min = 72.dp).clip(position.shape())
         .background(MaterialTheme.colorScheme.surfaceContainer)
     Box(
-        (if (onClick != null) base.clickable(onClick = onClick) else base)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+        base.padding(horizontal = 20.dp, vertical = 14.dp),
         contentAlignment = Alignment.CenterStart,
     ) { content() }
 }
@@ -579,11 +599,15 @@ private fun SwitchRow(
     position: Position = Position.MIDDLE,
 ) {
     val checked by remember { obs.booleanState(key, default) }
-    RowShell(position, onClick = { obs.setBoolean(key, default, !checked) }) {
+    val view = LocalView.current
+    RowShell(position, Modifier.toggleable(value = checked, role = Role.Switch) {
+        view.performHapticFeedback(if (it) HapticFeedbackConstants.TOGGLE_ON else HapticFeedbackConstants.TOGGLE_OFF)
+        obs.setBoolean(key, default, it)
+    }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Titles(title, subtitle, Modifier.weight(1f))
             Spacer(Modifier.width(16.dp))
-            Switch(checked = checked, onCheckedChange = { obs.setBoolean(key, default, it) })
+            Switch(checked = checked, onCheckedChange = null)
         }
     }
 }
@@ -618,11 +642,12 @@ private fun SegmentRow(
 ) {
     val value by remember { obs.stringState(key, default) }
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     RowShell(Position.MIDDLE) {
         Column {
             Titles(title, null)
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 options.forEachIndexed { i, (v, label) ->
                     val selected = v == value
                     val outer = 20.dp
@@ -635,9 +660,14 @@ private fun SegmentRow(
                         bottomEnd = if (i == options.lastIndex) outer else inner,
                     )
                     Box(
-                        Modifier.weight(1f).height(40.dp).clip(shape)
+                        Modifier.weight(1f).heightIn(min = 48.dp).clip(shape)
                             .background(if (selected) cs.primary else cs.surfaceContainerHighest)
-                            .clickable(role = Role.RadioButton) { obs.setString(key, default, v) },
+                            .selectable(selected = selected, role = Role.RadioButton) {
+                                if (!selected) {
+                                    view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+                                    obs.setString(key, default, v)
+                                }
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium,
