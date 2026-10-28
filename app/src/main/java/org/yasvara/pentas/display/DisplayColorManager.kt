@@ -20,6 +20,17 @@ class DisplayColorManager private constructor(
 
     private var originalColorMode: Int? = null
 
+    val styleOptions: List<Pair<String, Int>>
+        get() {
+            if (cdm == null) return emptyList()
+            val labels = if (deviceProfile.usesAospColorFallback) {
+                listOf("Natural" to 0, "Boosted" to 1, "Saturated" to 2, "Automatic" to 3)
+            } else {
+                listOf("Original" to 0, "Vivid" to 1, "Saturated" to 2, "P3" to 3, "sRGB" to 4)
+            }
+            return labels.filter { (_, style) -> style in deviceProfile.colorModeMap }
+        }
+
     fun applyForGame(style: Int) {
         if (cdm == null) return
         if (originalColorMode == null) {
@@ -28,10 +39,13 @@ class DisplayColorManager private constructor(
         applyStyle(style)
     }
 
-    fun applyStyle(style: Int) {
-        if (cdm == null) return
-        val target = deviceProfile.colorModeMap[style] ?: return
-        runCatching { cdm?.setColorMode(target) }
+    fun applyStyle(style: Int): Boolean {
+        val manager = cdm ?: return false
+        val target = deviceProfile.colorModeMap[style] ?: return false
+        return runCatching {
+            manager.setColorMode(target)
+            manager.colorMode == target
+        }.getOrDefault(false)
     }
 
     fun restore() {

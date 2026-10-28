@@ -34,6 +34,8 @@ data class GpuSpec(
     val governorPath: String?,
     val availableGovernorsPath: String?,
     val busyPaths: List<String> = listOfNotNull(busyPercentPath),
+    val minClockMhzPath: String? = null,
+    val maxClockMhzPath: String? = null,
 )
 
 data class DeviceProfile(
@@ -58,7 +60,6 @@ data class DeviceProfile(
                     t.contains("big") || t.contains("little") || t.contains("prime")
             }
             .map { it.tempPath }
-            .ifEmpty { fallbackCpuTempPaths() }
 
     val gpuTempPaths: List<String>
         get() = thermalZones
@@ -67,7 +68,6 @@ data class DeviceProfile(
                 t.contains("gpu") || t.contains("kgsl") || t.contains("adreno")
             }
             .map { it.tempPath }
-            .ifEmpty { fallbackGpuTempPaths() }
 
     val ddrTempPath: String?
         get() = thermalZones
@@ -76,21 +76,29 @@ data class DeviceProfile(
                 t.contains("ddr") || t.contains("dram") || t.contains("mem")
             }
             ?.tempPath
-            ?: fallbackDdrTempPath()
+
+    private val boardTempZone: ThermalZoneSpec?
+        get() = thermalZones.firstOrNull {
+            val type = it.type.lowercase()
+            type.contains("board") || type.contains("pmic") || type.contains("batt_therm") ||
+                type.startsWith("soc")
+        }
+
+    /** A board/PMIC sensor when the kernel publishes one; never substitute another zone by index. */
+    val boardTempPath: String? get() = boardTempZone?.tempPath
+
+    val boardTempLabel: String? get() = boardTempZone?.type?.lowercase()?.let { type ->
+        when {
+            type.contains("pmic") || type.startsWith("pm") -> "PMIC"
+            type.contains("batt") -> "Battery"
+            type.contains("soc") -> "SoC"
+            else -> "Board"
+        }
+    }
 
     val primaryCpuPolicyDir: String?
         get() = cpuClusters.lastOrNull()?.policyDir
 
-    private fun fallbackCpuTempPaths(): List<String> = listOf(
-        "/sys/class/thermal/thermal_zone9/temp"
-    )
-
-    private fun fallbackGpuTempPaths(): List<String> = listOf(
-        "/sys/class/thermal/thermal_zone24/temp"
-    )
-
-    private fun fallbackDdrTempPath(): String? =
-        "/sys/class/thermal/thermal_zone23/temp"
 }
 
 object DeviceProfiles {
@@ -129,32 +137,24 @@ object DeviceProfiles {
     private fun scanThermalZones(): List<ThermalZoneSpec> {
         val zones = mutableListOf<ThermalZoneSpec>()
         runCatching {
-            for (i in 0 until 128) {
-                val typeFile = File("/sys/class/thermal/thermal_zone$i/type")
-                val tempFile = File("/sys/class/thermal/thermal_zone$i/temp")
-                if (!typeFile.exists() || !tempFile.exists()) continue
-                val type = runCatching { typeFile.readText().trim() }.getOrDefault("zone$i")
+            val zoneDirs = File("/sys/class/thermal").listFiles()
+                ?.filter { it.name.startsWith("thermal_zone") }
+                ?.sortedBy { it.name.removePrefix("thermal_zone").toIntOrNull() ?: Int.MAX_VALUE }
+                ?: emptyList()
+            zoneDirs.forEach { dir ->
+                val index = dir.name.removePrefix("thermal_zone").toIntOrNull() ?: return@forEach
+                val typeFile = File(dir, "type")
+                val tempFile = File(dir, "temp")
+                if (!typeFile.exists() || !tempFile.exists()) return@forEach
+                val type = runCatching { typeFile.readText().trim() }.getOrDefault("zone$index")
                 zones.add(
                     ThermalZoneSpec(
-                        index = i,
+                        index = index,
                         type = type,
                         tempPath = tempFile.absolutePath,
                     )
                 )
             }
-        }
-
-        if (zones.isEmpty()) {
-            // onyx zones, used when zone probing finds nothing.
-            val cpu = intArrayOf(1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)
-            val gpu = intArrayOf(24, 25, 26, 27, 28, 29)
-            cpu.forEach {
-                zones.add(ThermalZoneSpec(it, "cpu-fallback-$it", "/sys/class/thermal/thermal_zone$it/temp"))
-            }
-            gpu.forEach {
-                zones.add(ThermalZoneSpec(it, "gpu-fallback-$it", "/sys/class/thermal/thermal_zone$it/temp"))
-            }
-            zones.add(ThermalZoneSpec(23, "ddr-fallback", "/sys/class/thermal/thermal_zone23/temp"))
         }
 
         return zones
@@ -170,36 +170,35 @@ object DeviceProfiles {
                 ?: emptyList()
 
             policies.forEach { policyDir ->
-                val policyIndex = policyDir.name.removePrefix("policy").toIntOrNull() ?: return@forEach
-                val affected = File(policyDir, "affected_cpus")
-                    .takeIf { it.exists() }
-                    ?.readText()
-                    ?.trim()
-                    ?.split(" ")
-                    ?.mapNotNull { it.toIntOrNull() }
-                    ?: emptyList()
+                val policyIndex = policyDir.name.removePrefix("policy").toIntOrNull()
+                    ?: return@forEach
+                runCatching {
+                    val affected = File(policyDir, "affected_cpus")
+                        .takeIf { it.exists() }
+                        ?.readText()
+                        ?.trim()
+                        ?.split(Regex("\\s+"))
+                        ?.mapNotNull { it.toIntOrNull() }
+                        ?: emptyList()
 
-                val min = File(policyDir, "cpuinfo_min_freq")
-                    .takeIf { it.exists() }
-                    ?.readText()
-                    ?.trim()
-                    ?.toLongOrNull()
-                    ?: 0L
+                    val min = File(policyDir, "cpuinfo_min_freq")
+                        .takeIf { it.exists() }
+                        ?.readText()
+                        ?.trim()
+                        ?.toLongOrNull()
+                        ?: 0L
 
-                val max = File(policyDir, "cpuinfo_max_freq")
-                    .takeIf { it.exists() }
-                    ?.readText()
-                    ?.trim()
-                    ?.toLongOrNull()
-                    ?: 0L
+                    val max = File(policyDir, "cpuinfo_max_freq")
+                        .takeIf { it.exists() }
+                        ?.readText()
+                        ?.trim()
+                        ?.toLongOrNull()
+                        ?: 0L
 
-                val name = when {
-                    max > 3_100_000L -> "Prime"
-                    max > 2_500_000L -> "Gold"
-                    else -> "Silver"
-                }
+                    val name = affected.takeIf { it.isNotEmpty() }?.let {
+                        "CPU ${it.minOrNull()}–${it.maxOrNull()}"
+                    } ?: "CPU cluster ${policyIndex + 1}"
 
-                result.add(
                     CpuClusterSpec(
                         policyIndex = policyIndex,
                         policyDir = policyDir.absolutePath,
@@ -208,31 +207,7 @@ object DeviceProfiles {
                         hwMinKhz = min,
                         hwMaxKhz = max,
                     )
-                )
-            }
-        }
-
-        if (result.isEmpty()) {
-            // onyx layout, used when policy probing finds nothing.
-            listOf(
-                Triple(0, listOf(0, 1), "Silver"),
-                Triple(2, listOf(2, 3, 4), "Gold"),
-                Triple(5, listOf(5, 6), "Gold+"),
-                Triple(7, listOf(7), "Prime"),
-            ).forEach { (policy, ids, name) ->
-                val dir = "/sys/devices/system/cpu/cpufreq/policy$policy"
-                if (File(dir).exists()) {
-                    result.add(
-                        CpuClusterSpec(
-                            policyIndex = policy,
-                            policyDir = dir,
-                            cpuIds = ids,
-                            name = name,
-                            hwMinKhz = File(dir, "cpuinfo_min_freq").readText().trim().toLongOrNull() ?: 0L,
-                            hwMaxKhz = File(dir, "cpuinfo_max_freq").readText().trim().toLongOrNull() ?: 0L,
-                        )
-                    )
-                }
+                }.getOrNull()?.let(result::add)
             }
         }
 
@@ -240,53 +215,79 @@ object DeviceProfiles {
     }
 
     private fun scanGpu(): GpuSpec? {
-        val kgsl = File("/sys/class/kgsl/kgsl-3d0")
-        if (kgsl.exists()) {
-            // Keep both candidates: discovery is cached for the process lifetime, whereas
-            // access and driver availability can change. Telemetry tries each actual read.
-            val busyPaths = listOf("gpu_busy_percentage", "gpubusy")
-                .map { "${kgsl.absolutePath}/$it" }
-            return GpuSpec(
-                baseDir = kgsl.absolutePath,
-                curFreqPaths = listOf(
-                    "${kgsl.absolutePath}/gpuclk",
-                    "${kgsl.absolutePath}/devfreq/cur_freq",
-                ),
-                busyPercentPath = busyPaths.first(),
-                availableFreqsPath = "${kgsl.absolutePath}/gpu_available_frequencies",
-                devfreqMinPath = "${kgsl.absolutePath}/devfreq/min_freq",
-                devfreqMaxPath = "${kgsl.absolutePath}/devfreq/max_freq",
-                governorPath = "${kgsl.absolutePath}/devfreq/governor",
-                availableGovernorsPath = "${kgsl.absolutePath}/devfreq/available_governors",
-                busyPaths = busyPaths,
-            )
-        }
+        fun files(dir: File?): List<File> =
+            runCatching { dir?.listFiles()?.filter { it.isDirectory } ?: emptyList() }.getOrDefault(emptyList())
+        fun exists(path: String): Boolean = runCatching { File(path).exists() }.getOrDefault(false)
+        fun hasFrequencyNode(dir: File) = listOf(
+            "cur_freq", "available_frequencies", "min_freq", "max_freq",
+        ).any { exists("${dir.absolutePath}/$it") }
 
-        // Generic devfreq fallback
-        runCatching {
-            val devfreq = File("/sys/class/devfreq")
-            val gpuDir = devfreq.listFiles()?.firstOrNull {
-                it.name.contains("gpu", true) ||
-                    it.name.contains("kgsl", true) ||
-                    it.name.contains("3d0", true)
-            }
-            if (gpuDir != null && File(gpuDir, "cur_freq").exists()) {
-                return GpuSpec(
-                    baseDir = gpuDir.absolutePath,
-                    curFreqPaths = listOf("${gpuDir.absolutePath}/cur_freq"),
-                    busyPercentPath = File(gpuDir, "load").takeIf { it.exists() }?.absolutePath,
-                    availableFreqsPath = File(gpuDir, "available_frequencies")
-                        .takeIf { it.exists() }?.absolutePath,
-                    devfreqMinPath = File(gpuDir, "min_freq").takeIf { it.exists() }?.absolutePath,
-                    devfreqMaxPath = File(gpuDir, "max_freq").takeIf { it.exists() }?.absolutePath,
-                    governorPath = File(gpuDir, "governor").takeIf { it.exists() }?.absolutePath,
-                    availableGovernorsPath = File(gpuDir, "available_governors")
-                        .takeIf { it.exists() }?.absolutePath,
-                )
-            }
+        val kgslLink = File("/sys/class/kgsl/kgsl-3d0").takeIf { it.exists() }
+        val kgslRoot = kgslLink?.let { runCatching { it.canonicalFile }.getOrDefault(it) }
+        val kgslDevice = kgslRoot?.parentFile?.parentFile
+        val classDevfreq = files(File("/sys/class/devfreq"))
+        val deviceDevfreq = files(kgslDevice?.let { File(it, "devfreq") })
+        val devfreqDirs = (deviceDevfreq + classDevfreq).distinctBy {
+            runCatching { it.canonicalPath }.getOrDefault(it.absolutePath)
         }
+        val kgslDevicePath = kgslDevice?.let { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
+        val devfreq = devfreqDirs.firstOrNull { dir ->
+            val path = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+            val isKgslChild = kgslDevicePath != null && path.startsWith("$kgslDevicePath/")
+            val looksLikeGpu = dir.name.contains("gpu", true) || dir.name.contains("kgsl", true) ||
+                dir.name.contains("3d0", true)
+            (isKgslChild || looksLikeGpu) && hasFrequencyNode(dir)
+        }
+        val rootFile = kgslRoot ?: devfreq ?: return null
+        val root = rootFile.absolutePath
+        val devfreqRoot = devfreq?.absolutePath
 
-        return null
+        fun existing(vararg candidates: String): String? =
+            candidates.firstOrNull(::exists)
+
+        // KGSL controls and its devfreq child are siblings on some Qualcomm kernels.
+        // Resolve the class symlink before looking for that child.
+        val busyPaths = listOfNotNull(
+            existing("$root/gpu_busy_percentage"),
+            existing("$root/gpubusy"),
+            existing("$root/load"),
+        ).distinct()
+        val curFreqPaths = listOfNotNull(
+            existing("$root/gpuclk"),
+            devfreqRoot?.let { existing("$it/cur_freq") },
+            existing("$root/devfreq/cur_freq", "$root/cur_freq"),
+        ).distinct()
+        return GpuSpec(
+            baseDir = root,
+            curFreqPaths = curFreqPaths,
+            busyPercentPath = busyPaths.firstOrNull(),
+            availableFreqsPath = existing(
+                "$root/gpu_available_frequencies",
+                *(devfreqRoot?.let { arrayOf("$it/available_frequencies") } ?: emptyArray()),
+                "$root/devfreq/available_frequencies",
+                "$root/available_frequencies",
+            ),
+            devfreqMinPath = existing(
+                *(devfreqRoot?.let { arrayOf("$it/min_freq") } ?: emptyArray()),
+                "$root/devfreq/min_freq", "$root/min_freq",
+            ),
+            devfreqMaxPath = existing(
+                *(devfreqRoot?.let { arrayOf("$it/max_freq") } ?: emptyArray()),
+                "$root/devfreq/max_freq", "$root/max_freq",
+            ),
+            governorPath = existing(
+                *(devfreqRoot?.let { arrayOf("$it/governor") } ?: emptyArray()),
+                "$root/devfreq/governor", "$root/governor",
+            ),
+            availableGovernorsPath = existing(
+                *(devfreqRoot?.let { arrayOf("$it/available_governors") } ?: emptyArray()),
+                "$root/devfreq/available_governors",
+                "$root/available_governors",
+            ),
+            busyPaths = busyPaths,
+            minClockMhzPath = existing("$root/min_clock_mhz"),
+            maxClockMhzPath = existing("$root/max_clock_mhz"),
+        )
     }
 
     private fun scanBattery(thermalZones: List<ThermalZoneSpec>): BatterySpec {
@@ -343,24 +344,16 @@ object DeviceProfiles {
             4 to 0, // sRGB-ish fallback
         )
 
-        val cdm = runCatching {
-            context.getSystemService(android.hardware.display.ColorDisplayManager::class.java)
-        }.getOrNull()
-
         val allowed = runCatching {
-            val m = cdm?.javaClass?.getMethod("getAllowedColorModes")
-            (m?.invoke(cdm) as? IntArray)?.toList() ?: emptyList()
-        }.getOrDefault(emptyList())
+            context.resources.getIntArray(com.android.internal.R.array.config_availableColorModes).toSet()
+        }.getOrDefault(emptySet())
 
-        val isXiaomiLike = Build.MANUFACTURER.equals("Xiaomi", true) ||
-            SystemProperties.get("ro.miui.ui.version.name", "").isNotEmpty()
-
-        val hasVendorModes = allowed.any { it >= 256 } || isXiaomiLike
+        val hasVendorModes = allowed.any { it >= 256 }
 
         return if (hasVendorModes) {
-            vendorMap to false
+            vendorMap.filterValues { it in allowed } to false
         } else {
-            aospMap to true
+            aospMap.filterKeys { it != 4 }.filterValues { it in allowed } to true
         }
     }
 

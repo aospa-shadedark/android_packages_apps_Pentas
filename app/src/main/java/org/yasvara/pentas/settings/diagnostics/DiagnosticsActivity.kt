@@ -65,6 +65,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.device.DeviceProfiles
+import org.yasvara.pentas.thermal.KernelNodeIO
+import org.yasvara.pentas.thermal.ThermalNodes
 import org.yasvara.pentas.touch.XiaomiTouchFeatureClient
 import org.yasvara.pentas.ui.theme.PentasTheme
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -518,9 +520,11 @@ private val NODE_CHECKS = listOf(
 private fun collectReport(context: Context): DiagReport {
     val profile = DeviceProfiles.get(context)
 
-    val watcherOk = true
+    val taskServiceOk = runCatching {
+        ServiceManager.checkService("activity_task")?.isBinderAlive == true
+    }.getOrDefault(false)
     val touchOk = runCatching { XiaomiTouchFeatureClient.isAvailable }.getOrDefault(false)
-    val servicesOk = (if (watcherOk) 1 else 0) + (if (touchOk) 1 else 0)
+    val servicesOk = (if (taskServiceOk) 1 else 0) + (if (touchOk) 1 else 0)
     val servicesTotal = 2
     val selinux = runCatching {
         val p = Runtime.getRuntime().exec(arrayOf("getenforce"))
@@ -530,7 +534,7 @@ private fun collectReport(context: Context): DiagReport {
     }.getOrDefault("Unknown")
 
     val core = Sec("Core Services", SymId.Dns).apply {
-        status("ForegroundAppTracker", watcherOk)
+        status("Android task service", taskServiceOk)
         status("Xiaomi Touch HAL", touchOk)
         info("SELinux", selinux)
     }
@@ -551,6 +555,9 @@ private fun collectReport(context: Context): DiagReport {
                 "policy${c.policyIndex} · ${c.name}",
                 "cpus ${c.cpuIds} · max ${c.hwMaxKhz / 1000} MHz",
             )
+            info("policy${c.policyIndex} limit access", if (writableRange(
+                ThermalNodes.cpuScalingMin(c.policyDir), ThermalNodes.cpuScalingMax(c.policyDir),
+            )) "Writable" else "Managed by ROM")
         }
     }
 
@@ -558,6 +565,7 @@ private fun collectReport(context: Context): DiagReport {
         info("CPU temp paths", profile.cpuTempPaths.size)
         info("GPU temp paths", profile.gpuTempPaths.size)
         info("DDR temp", profile.ddrTempPath ?: "none")
+        info("Board sensor", profile.boardTempPath ?: "none")
         info("Battery temp", profile.batteryTempPath ?: "none")
         info("Battery current", profile.batteryCurrentNowPath ?: "none")
         info("Battery voltage", profile.batteryVoltageNowPath ?: "none")
@@ -570,14 +578,19 @@ private fun collectReport(context: Context): DiagReport {
             info("Base dir", g.baseDir)
             info("Busy %", g.busyPercentPath ?: "none")
             info("Busy candidates", g.busyPaths.joinToString())
+            info("Frequency table", g.availableFreqsPath ?: "none")
+            info("Current frequency", g.curFreqPaths.joinToString().ifEmpty { "none" })
+            info("Devfreq min/max", "${g.devfreqMinPath ?: "none"} · ${g.devfreqMaxPath ?: "none"}")
+            info("KGSL min/max MHz", "${g.minClockMhzPath ?: "none"} · ${g.maxClockMhzPath ?: "none"}")
             info("Governor", g.governorPath ?: "none")
-            info("Available freqs", g.availableFreqsPath ?: "none")
+            info("Limit access", if (writableRange(g.devfreqMinPath, g.devfreqMaxPath) ||
+                writableRange(g.minClockMhzPath, g.maxClockMhzPath)) "Writable" else "Managed by ROM")
         } else {
             info("GPU node", "NOT FOUND")
         }
     }
 
-    val nodes = Sec("Node Checks", SymId.Storage).apply {
+    val nodes = Sec("Node Presence", SymId.Storage).apply {
         NODE_CHECKS.forEach { p -> node(p, File(p).exists()) }
     }
 
@@ -617,3 +630,7 @@ private fun collectReport(context: Context): DiagReport {
         platform = profile.platform,
     )
 }
+
+private fun writableRange(minNode: String?, maxNode: String?): Boolean =
+    minNode != null && maxNode != null &&
+        KernelNodeIO.isWritable(minNode) && KernelNodeIO.isWritable(maxNode)

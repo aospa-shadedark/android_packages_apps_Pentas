@@ -62,6 +62,12 @@ object KernelNodeIO {
 
     fun exists(path: String): Boolean = File(path).exists()
 
+    /** Open a writable sysfs handle without changing its value. */
+    fun isWritable(path: String): Boolean {
+        val handle = writeHandles.getOrPut(path) { NodeHandle(path, writable = true) }
+        return synchronized(handle) { handle.ensureOpen() != null }
+    }
+
     /**
      * Read the node content as a trimmed string, or null on failure.
      * Zero allocation beyond the returned String.

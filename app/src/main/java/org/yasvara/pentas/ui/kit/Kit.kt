@@ -349,8 +349,10 @@ fun Slider(
     @DrawableRes icon: Int = 0,
     marker: Float? = null,
     description: String? = null,
+    enabled: Boolean = true,
 ) {
     val cs = MaterialTheme.colorScheme
+    val activeColor = if (enabled) cs.primary else cs.onSurfaceVariant.copy(alpha = 0.38f)
     val view = LocalView.current
     val change by rememberUpdatedState(onChange)
     val commit by rememberUpdatedState(onCommit)
@@ -372,7 +374,7 @@ fun Slider(
         val snapped = snap(next)
         val now = SystemClock.uptimeMillis()
         if (tickPosition(snapped) != tickPosition(currentValue) && now - lastTickTime >= 40L) {
-            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
             lastTickTime = now
         }
         change(snapped)
@@ -381,17 +383,19 @@ fun Slider(
         modifier.fillMaxWidth().height(height)
             .progressSemantics(value, range, steps)
             .semantics {
+                if (!enabled) disabled()
                 description?.let { contentDescription = it }
                 setProgress { requested ->
                     val next = snap((requested - range.start) / (range.endInclusive - range.start))
-                    if (next == value) false else {
+                    if (!enabled || next == value) false else {
                         change(next)
                         commit(next)
                         true
                     }
                 }
             }
-            .pointerInput(range, steps) {
+            .pointerInput(range, steps, enabled) {
+                if (!enabled) return@pointerInput
                 detectTapGestures { o ->
                     val v = snap(o.x / size.width)
                     updateFromGesture(o.x / size.width)
@@ -399,7 +403,8 @@ fun Slider(
                     view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                 }
             }
-            .pointerInput(range, steps) {
+            .pointerInput(range, steps, enabled) {
+                if (!enabled) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragStart = { o -> drag = o.x / size.width; updateFromGesture(drag) },
                     onDragEnd = {
@@ -423,14 +428,14 @@ fun Slider(
         val r = track / 2
         Box(
             Modifier.offset(y = (height - track) / 2).width((handleX - 4.dp).coerceAtLeast(0.dp)).height(track)
-                .clip(RoundedCornerShape(r, 3.dp, 3.dp, r)).background(cs.primary),
+                .clip(RoundedCornerShape(r, 3.dp, 3.dp, r)).background(activeColor),
             contentAlignment = Alignment.CenterStart,
         ) {
             if (icon != 0 && handleX > 30.dp) {
                 Box(Modifier.padding(start = 6.dp)) { Glyph(icon, cs.onPrimary, 14.dp) }
             }
         }
-        Box(Modifier.offset(x = handleX).size(3.dp, height).clip(CircleShape).background(cs.primary))
+        Box(Modifier.offset(x = handleX).size(3.dp, height).clip(CircleShape).background(activeColor))
         Box(
             Modifier.offset(x = handleX + 7.dp, y = (height - track) / 2)
                 .width((w - handleX - 7.dp).coerceAtLeast(0.dp)).height(track)
@@ -478,7 +483,7 @@ fun RangeSlider(
         val next = move(i)
         val now = SystemClock.uptimeMillis()
         if (next != currentRange && now - lastTickTime >= 40L) {
-            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
             lastTickTime = now
         }
         change(next.first, next.second)

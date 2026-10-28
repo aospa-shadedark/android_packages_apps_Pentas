@@ -146,13 +146,32 @@ object ThermalProfiles {
     }
 
     /**
+     * Unique vendor thermal profiles mapping to distinct underlying sconfig behaviors.
+     * Omits duplicate alias presets (e.g. Genshin/Honkai pointing to Balanced Gaming,
+     * 4K Recording pointing to Camera, AR/VR pointing to Default).
+     */
+    val UNIQUE_PROFILE_INDICES = listOf(
+        0,  // Auto (-1)
+        1,  // Default (0)
+        2,  // Performance (10)
+        3,  // Balanced Gaming (20)
+        4,  // Heavy Gaming (13)
+        8,  // Camera (12)
+        10, // Video (21)
+        11, // Video Chat (4)
+        12, // Navigation (19)
+        13, // Phone Call (8)
+        16, // Battery Saver (-2)
+    )
+
+    /**
      * Built-in scenes plus custom profiles. [firstName] renames index 0 ("Auto" globally,
      * "Follow global" per app); [builtinIndices] restricts the built-ins.
      */
     fun options(
         customJson: String?,
         firstName: String? = null,
-        builtinIndices: List<Int> = PROFILE_NAMES.indices.toList(),
+        builtinIndices: List<Int> = UNIQUE_PROFILE_INDICES,
     ): List<ProfileOption> {
         val builtin = builtinIndices.map { i ->
             ProfileOption(i, if (i == 0 && firstName != null) firstName else PROFILE_NAMES[i])

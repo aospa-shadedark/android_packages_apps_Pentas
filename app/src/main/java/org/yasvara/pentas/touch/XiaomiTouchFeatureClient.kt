@@ -27,6 +27,14 @@ object XiaomiTouchFeatureClient {
     private const val HIDL_INSTANCE = "default"
     private const val LOOKUP_BACKOFF_MS = 30_000L
 
+    /** Transaction IDs from hardware/xiaomi/interfaces/xiaomi/hw/touchfeature/1.0. */
+    private const val HIDL_SET_MODE_VALUE = 1
+    private const val HIDL_GET_MODE_CUR_VALUE = 2
+    private const val HIDL_GET_MODE_MAX_VALUE = 3
+    private const val HIDL_GET_MODE_MIN_VALUE = 4
+    private const val HIDL_GET_MODE_DEFAULT_VALUE = 5
+    private const val HIDL_GET_MODE_VALUE = 7
+
     /** AIDL transact codes (V3) */
     private const val TRANSACT_GET_MODE_CUR_VALUE = 1
     private const val TRANSACT_GET_MODE_DEFAULT_VALUE = 2
@@ -295,8 +303,11 @@ object XiaomiTouchFeatureClient {
 
     /** Sets [modeId] on [displayId]; true when the HAL call succeeded. */
     fun setTouchMode(displayId: Int, modeId: Int, value: Int): Boolean {
-        // Prefer HIDL on this device; HIDL 1.0 setModeValue is transaction 8.
-        if (getHidlService() != null) return hidlInt(8, displayId, modeId, value) == 0
+        // Prefer HIDL on this device. Transaction 8 is setModeLongValue, which
+        // has a different parcel layout; scalar setModeValue is transaction 1.
+        if (getHidlService() != null) {
+            return hidlInt(HIDL_SET_MODE_VALUE, displayId, modeId, value) == 0
+        }
         val binder = getAidlService() ?: return false
 
         val data = Parcel.obtain()
@@ -322,9 +333,18 @@ object XiaomiTouchFeatureClient {
         }
     }
 
-    /** Getter transaction IDs 1–4 are shared by AIDL V3 and HIDL 1.0. */
+    /** Map the AIDL getter operation to the corresponding HIDL 1.0 transaction. */
     private fun getModeInt(transactCode: Int, displayId: Int, modeId: Int): Int {
-        if (getHidlService() != null) return hidlInt(transactCode, displayId, modeId) ?: -1
+        if (getHidlService() != null) {
+            val hidlCode = when (transactCode) {
+                TRANSACT_GET_MODE_CUR_VALUE -> HIDL_GET_MODE_CUR_VALUE
+                TRANSACT_GET_MODE_DEFAULT_VALUE -> HIDL_GET_MODE_DEFAULT_VALUE
+                TRANSACT_GET_MODE_MAX_VALUE -> HIDL_GET_MODE_MAX_VALUE
+                TRANSACT_GET_MODE_MIN_VALUE -> HIDL_GET_MODE_MIN_VALUE
+                else -> return -1
+            }
+            return hidlInt(hidlCode, displayId, modeId) ?: -1
+        }
         val binder = getAidlService() ?: return -1
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
@@ -352,7 +372,7 @@ object XiaomiTouchFeatureClient {
     fun getModeValue(modeId: Int): IntArray? {
         if (getHidlService() != null) {
             val values = transactHidl(
-                5,
+                HIDL_GET_MODE_VALUE,
                 writeArgs = { parcel, request ->
                     val writeInt = parcel.getMethod("writeInt32", Int::class.javaPrimitiveType)
                     writeInt.invoke(request, DISPLAY_PRIMARY)

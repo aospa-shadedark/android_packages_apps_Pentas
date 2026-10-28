@@ -32,6 +32,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.platform.LocalContext
+import org.yasvara.pentas.device.DeviceProfile
+import org.yasvara.pentas.device.DeviceProfiles
 import org.yasvara.pentas.device.DeviceSupport
 import org.yasvara.pentas.thermal.KernelNodeIO
 import org.yasvara.pentas.thermal.ThermalNodes
@@ -46,8 +49,9 @@ private data class Pack(
     val capacity: Int,
     val currentUa: Long,
     val voltageUv: Long,
-    val cellC: Float,
-    val boardC: Float,
+    val cellC: Float?,
+    val boardC: Float?,
+    val boardLabel: String?,
     val full: Long,
     val design: Long,
     val cycles: Int,
@@ -70,7 +74,7 @@ private fun uevent(dir: String): Map<String, String> = runCatching {
 /** The gauge reports "unsupported" as a large negative sentinel; reject out-of-band values. */
 private fun Map<String, String>.num(k: String, sane: LongRange) = this[k]?.trim()?.toLongOrNull()?.takeIf { it in sane }
 
-private fun readPack(): Pack {
+private fun readPack(profile: DeviceProfile): Pack {
     val b = uevent("battery")
     val u = uevent("usb")
     val supportsBypass = DeviceSupport.bypassCharging
@@ -81,8 +85,10 @@ private fun readPack(): Pack {
         capacity = b["CAPACITY"]?.trim()?.toIntOrNull() ?: 0,
         currentUa = -(b.num("CURRENT_NOW", -60_000_000L..60_000_000L) ?: 0L),
         voltageUv = b.num("VOLTAGE_NOW", 0L..6_000_000L) ?: 0L,
-        cellC = (b.num("TEMP", -500L..1500L) ?: 0L) / 10f,
-        boardC = (KernelNodeIO.readLong(ThermalNodes.BATT_THERM_ZONE) ?: 0L) / 1000f,
+        cellC = b.num("TEMP", -500L..1500L)?.div(10f),
+        boardC = profile.boardTempPath?.let { KernelNodeIO.readLong(it) }
+            ?.let { if (it > 1000L) it / 1000f else it / 10f },
+        boardLabel = profile.boardTempLabel,
         full = b.num("CHARGE_FULL", 0L..20_000_000L) ?: 0L,
         design = b.num("CHARGE_FULL_DESIGN", 0L..20_000_000L) ?: 0L,
         cycles = b["CYCLE_COUNT"]?.trim()?.toIntOrNull() ?: 0,
@@ -96,11 +102,13 @@ private fun readPack(): Pack {
 @Composable
 fun BatteryPage() {
     val cs = MaterialTheme.colorScheme
+    val context = LocalContext.current
     var pack by remember { mutableStateOf<Pack?>(null) }
     var flow by remember { mutableStateOf(listOf<Float>()) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(context) {
+        val profile = withContext(Dispatchers.IO) { DeviceProfiles.get(context) }
         while (true) {
-            val p = withContext(Dispatchers.IO) { readPack() }
+            val p = withContext(Dispatchers.IO) { readPack(profile) }
             pack = p
             flow = (flow + if (p.charging) p.watts else -p.watts).takeLast(90)
             delay(1000)
@@ -118,8 +126,10 @@ fun BatteryPage() {
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Chip("Cell", "%.1f°".format(p.cellC), p.cellC >= 42f, Modifier.weight(1f))
-                Chip("Board", "%.1f°".format(p.boardC), false, Modifier.weight(1f))
+                Chip("Cell", p.cellC?.let { "%.1f°".format(it) } ?: "—",
+                    p.cellC?.let { it >= 42f } == true, Modifier.weight(1f))
+                Chip(p.boardLabel ?: "Board", p.boardC?.let { "%.1f°".format(it) } ?: "—",
+                    false, Modifier.weight(1f))
                 Chip("Health", "%.0f%%".format(p.health), p.health in 0.1f..80f, Modifier.weight(1f))
             }
         }

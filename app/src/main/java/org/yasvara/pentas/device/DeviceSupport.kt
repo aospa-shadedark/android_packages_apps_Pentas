@@ -17,6 +17,6 @@ object DeviceSupport {
      */
     val thermalDaemon: Boolean by lazy { SystemProperties.getBoolean("ro.pentas.thermal_daemon", false) }
 
-    /** Expose bypass charging only when the device provides its actual control node. */
-    val bypassCharging: Boolean by lazy { KernelNodeIO.exists(ThermalNodes.BYPASS_CHARGE) }
+    /** A present but inaccessible node must not expose a switch that cannot apply. */
+    val bypassCharging: Boolean by lazy { KernelNodeIO.isWritable(ThermalNodes.BYPASS_CHARGE) }
 }

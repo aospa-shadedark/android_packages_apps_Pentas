@@ -275,13 +275,16 @@ class ThermalController @Inject constructor(
 
         if (sconfig == -1) { // Auto → restore original
             if (appliedSconfig != -1 && originalSconfig >= 0) {
-                KernelNodeIO.write(ThermalNodes.SCONFIG, originalSconfig)
-                KernelNodeIO.write(ThermalNodes.POWERSAVE_MODE, "0")
-                appliedSconfig = -1
-                activeProfileIndex = -1
-                applyGameBoost(false)
-                setProp(ThermalProfiles.PROP_SS_PROFILE, "default")
-                Log.i(TAG, "Auto → restored sconfig=$originalSconfig ss=default")
+                if (KernelNodeIO.write(ThermalNodes.SCONFIG, originalSconfig)) {
+                    KernelNodeIO.write(ThermalNodes.POWERSAVE_MODE, "0")
+                    appliedSconfig = -1
+                    activeProfileIndex = -1
+                    applyGameBoost(false)
+                    setProp(ThermalProfiles.PROP_SS_PROFILE, "default")
+                    Log.i(TAG, "Auto → restored sconfig=$originalSconfig ss=default")
+                } else {
+                    Log.w(TAG, "Auto → failed to write original sconfig=$originalSconfig, retaining appliedSconfig=$appliedSconfig")
+                }
             }
             return
         }
@@ -290,7 +293,13 @@ class ThermalController @Inject constructor(
         val powersave = sconfig == -2
 
         if (targetSconfig != appliedSconfig || activeProfileIndex != profileIndex) {
-            KernelNodeIO.write(ThermalNodes.SCONFIG, targetSconfig)
+            if (!KernelNodeIO.write(ThermalNodes.SCONFIG, targetSconfig)) {
+                Log.w(
+                    TAG,
+                    "Failed to write sconfig=$targetSconfig for profile=${ThermalProfiles.PROFILE_NAMES[profileIndex]}; retaining appliedSconfig=$appliedSconfig"
+                )
+                return
+            }
             KernelNodeIO.write(ThermalNodes.POWERSAVE_MODE, powersave)
             appliedSconfig = targetSconfig
             activeProfileIndex = profileIndex
@@ -315,9 +324,12 @@ class ThermalController @Inject constructor(
         val profile = customRepo.loadAll().getOrNull(arrayIndex) ?: return false
         customRepo.applyToDaemon(profile)
 
-        // Custom profiles use the Performance vendor-thermal scene (sconfig=6).
+        // Custom profiles use the Performance vendor-thermal scene (sconfig=10).
         val customSconfig = ThermalProfiles.PROFILE_SCONFIG[ThermalProfiles.PROFILE_PERFORMANCE]
-        KernelNodeIO.write(ThermalNodes.SCONFIG, customSconfig)
+        if (!KernelNodeIO.write(ThermalNodes.SCONFIG, customSconfig)) {
+            Log.w(TAG, "Failed to write sconfig=$customSconfig for custom profile '${profile.name}'")
+            return false
+        }
         KernelNodeIO.write(ThermalNodes.POWERSAVE_MODE, "0")
 
         // The daemon only loads the cluster curves we just published once this

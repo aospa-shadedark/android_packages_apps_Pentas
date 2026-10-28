@@ -134,7 +134,7 @@ private val helpTopics = listOf(
         listOf(
             "Open a game's Performance controls for its limits, or use Global tuning from Games for the shared profile.",
             "Default limits are recommended. Pentas asks you to confirm before applying clock changes; higher limits can increase heat and battery use and may cause instability or throttling.",
-            "Pentas discovers CPU/GPU frequency tables from the running device. A detected control marked read-only means the ROM or kernel does not grant Pentas write access; the app cannot grant itself that access. Open Diagnostics from Help to copy the paths Pentas found when reporting a missing control.",
+            "Pentas checks CPU/GPU write access before showing manual clock sliders. Unavailable controls stay under automatic ROM control, while monitoring remains available. Open Diagnostics from Help to copy the detected paths when reporting a missing control.",
         ), "clock cpu gpu performance heat warning default tuning",
     ),
     HelpTopic(

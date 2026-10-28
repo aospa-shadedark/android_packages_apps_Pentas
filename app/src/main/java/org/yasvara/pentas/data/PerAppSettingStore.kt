@@ -19,6 +19,7 @@ import org.yasvara.pentas.session.ActiveSessionStore
 import org.yasvara.pentas.thermal.ThermalProfiles
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 
 /**
  * Per-game settings stored as `{"<pkg>": value}` maps in Settings.System. Setters apply to the
@@ -35,31 +36,60 @@ class PerAppSettingStore @Inject constructor(
     private fun live(pkg: String) = session.currentPackage == pkg
 
     /** Render scale; GameManagerService applies it through the game's custom game mode. */
-    fun resolution(pkg: String) = io.getPerAppString(KEY_RESOLUTION, pkg, "1.0")
-    fun setResolution(pkg: String, factor: String) {
-        io.putPerApp(KEY_RESOLUTION, pkg, factor.takeIf { it != "1.0" })
-        applyResolution(pkg, factor.toFloatOrNull() ?: 1f)
+    fun resolution(pkg: String) = resolutionState(pkg).scale.toString()
+
+    fun resolutionState(pkg: String): RenderResolutionState = runCatching {
+        val games = context.getSystemService(GameManager::class.java)
+            ?: return@runCatching RenderResolutionState(unavailableReason = "Render resolution is unavailable on this ROM.")
+        val info = games.getGameModeInfo(pkg)
+            ?: return@runCatching RenderResolutionState(unavailableReason = "Android does not support render resolution for this app.")
+        val scale = if (info.activeGameMode == GameManager.GAME_MODE_CUSTOM) {
+            info.getGameModeConfiguration(GameManager.GAME_MODE_CUSTOM)?.scalingFactor ?: 1f
+        } else 1f
+        val available = GameManager.GAME_MODE_CUSTOM in info.availableGameModes && info.isDownscalingAllowed
+        RenderResolutionState(
+            scale = normalizeRenderScale(scale.toString()),
+            available = available,
+            unavailableReason = if (available) null else "This game does not allow render resolution changes.",
+        )
+    }.getOrElse {
+        Log.w("Pentas", "Render resolution support for $pkg could not be checked", it)
+        RenderResolutionState(unavailableReason = "Render resolution is unavailable on this ROM.")
+    }
+
+    fun setResolution(pkg: String, factor: String): Boolean {
+        if (!resolutionState(pkg).available) return false
+        val scale = normalizeRenderScale(factor)
+        if (!applyResolution(pkg, scale)) return false
+        io.putPerApp(KEY_RESOLUTION, pkg, scale.toString().takeIf { scale < 1f })
+        return true
     }
 
     /** Takes effect the next time the game starts; GameManagerService keeps it across reboots. */
-    private fun applyResolution(pkg: String, scale: Float) {
+    private fun applyResolution(pkg: String, scale: Float): Boolean =
         runCatching {
-            val games = context.getSystemService(GameManager::class.java) ?: return
-            if (scale < 1f) {
+            val games = context.getSystemService(GameManager::class.java) ?: return@runCatching false
+            val safeScale = normalizeRenderScale(scale.toString())
+            if (safeScale < 1f) {
                 games.updateCustomGameModeConfiguration(
-                    pkg, GameModeConfiguration.Builder().setScalingFactor(scale.coerceIn(MIN_SCALE, 1f)).build(),
+                    pkg, GameModeConfiguration.Builder().setScalingFactor(safeScale).build(),
                 )
                 games.setGameMode(pkg, GameManager.GAME_MODE_CUSTOM)
             } else if (games.getGameMode(pkg) == GameManager.GAME_MODE_CUSTOM) {
                 games.setGameMode(pkg, GameManager.GAME_MODE_STANDARD)
             }
-        }.onFailure { Log.w("Pentas", "Render scale for $pkg not applied", it) }
-    }
+            val applied = resolutionState(pkg)
+            applied.available && abs(applied.scale - safeScale) < 0.001f
+        }.onFailure { Log.w("Pentas", "Render scale for $pkg not applied", it) }.getOrDefault(false)
+
+    fun displayStyleOptions(): List<Pair<String, Int>> = display.styleOptions
 
     fun displayStyle(pkg: String) = io.getPerAppInt(KEY_DISPLAY_STYLE, pkg, 0)
-    fun setDisplayStyle(pkg: String, mode: Int) {
+    fun setDisplayStyle(pkg: String, mode: Int): Boolean {
+        if (display.styleOptions.none { it.second == mode }) return false
+        if (live(pkg) && !display.applyStyle(mode)) return false
         io.putPerApp(KEY_DISPLAY_STYLE, pkg, mode.takeIf { it > 0 })
-        if (live(pkg)) display.applyStyle(mode)
+        return true
     }
 
     fun thermalProfile(pkg: String): Int = io.getPerAppInt(ThermalProfiles.KEY_APP_PROFILES, pkg, 0)
@@ -114,8 +144,5 @@ class PerAppSettingStore @Inject constructor(
         const val KEY_RESOLUTION = "pentas_game_resolution"
         const val KEY_DISPLAY_STYLE = "pentas_display_style"
         const val KEY_GPU_COMPOSITION = "disable_hw_overlays_apps"
-
-        /** The smallest scaling factor GameModeConfiguration accepts. */
-        private const val MIN_SCALE = 0.1f
     }
 }

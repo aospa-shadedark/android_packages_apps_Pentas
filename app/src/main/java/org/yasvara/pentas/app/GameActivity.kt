@@ -147,6 +147,18 @@ private fun Overview(
     val icon = remember { info?.let { pm.getApplicationIcon(it).toBitmap(192, 192).asImageBitmap() } }
     val added = remember { pkg in deps.system().games }
     val isGame = added || info?.let { AppClassifier.isGame(it) } == true
+    val clockSummary by produceState("Checking support…", pkg, refreshKey) {
+        value = withContext(Dispatchers.IO) {
+            val perf = deps.perf()
+            val writable = perf.cpuClusters.any { it.availableKhz.size > 1 && perf.canTuneCpuRange(it) } ||
+                (perf.gpuInfo.availableHz.size > 1 && perf.canTuneGpuRange())
+            when {
+                !writable -> "Managed by ROM"
+                perf.clockScope(pkg) == PerfTuner.ClockScope.GLOBAL -> "Global clocks"
+                else -> "Own clocks"
+            }
+        }
+    }
     val soundSummary by produceState("Checking profile…", pkg, refreshKey) {
         value = withContext(Dispatchers.IO) {
             when (val backend = DolbyBridge.backend(ctx)) {
@@ -211,7 +223,7 @@ private fun Overview(
         val customJson = Settings.System.getStringForUser(ctx.contentResolver, ThermalProfiles.KEY_CUSTOM_PROFILES, UserHandle.USER_CURRENT)
         val rows = listOfNotNull(
             Triple(Part.GRAPHICS, Sym.AspectRatio, if (scale == "1.0") "Native" else "${scale}×"),
-            Triple(Part.PERFORMANCE, Sym.Speed, if (deps.perf().clockScope(pkg) == PerfTuner.ClockScope.GLOBAL) "Global clocks" else "Own clocks"),
+            Triple(Part.PERFORMANCE, Sym.Speed, clockSummary),
             Triple(Part.THERMAL, Sym.Thermostat, ThermalProfiles.nameOf(perApp.thermalProfile(pkg), customJson)),
             Triple(Part.TOUCH, Sym.TouchApp, null),
             Triple(Part.SOUND, Sym.GraphicEq, soundSummary),

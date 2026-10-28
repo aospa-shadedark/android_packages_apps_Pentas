@@ -105,18 +105,35 @@ class PerfTuner @Inject constructor(@ApplicationContext context: Context) {
     /** Clusters in policy order, which is also the thermal daemon's slot order. */
     val cpuClusters: List<CpuCluster> by lazy {
         deviceProfile.cpuClusters.mapIndexed { slot, spec ->
+            val listedFrequencies = KernelNodeIO
+                .readLongList("${spec.policyDir}/scaling_available_frequencies")
+                .filter { it > 0L }
+                .distinct()
+                .sorted()
+            val reportedMin = spec.hwMinKhz.takeIf { it > 0L }
+                ?: KernelNodeIO.readLong(ThermalNodes.cpuHwMin(spec.policyDir))?.takeIf { it > 0L }
+            val reportedMax = spec.hwMaxKhz.takeIf { it > 0L }
+                ?: KernelNodeIO.readLong(ThermalNodes.cpuHwMax(spec.policyDir))?.takeIf { it > 0L }
+            val frequencies = if (listedFrequencies.size > 1) listedFrequencies else if (
+                reportedMin != null && reportedMax != null && reportedMax > reportedMin
+            ) {
+                listOf(reportedMin, reportedMax)
+            } else listedFrequencies
+            val fallbackMin = frequencies.firstOrNull() ?: 0L
+            val fallbackMax = frequencies.lastOrNull() ?: fallbackMin
+            val hwMin = reportedMin?.takeIf { reportedMax == null || it <= reportedMax }
+                ?: fallbackMin
+            val hwMax = reportedMax?.takeIf { it >= hwMin } ?: fallbackMax
             CpuCluster(
                 slot = slot,
                 policyIndex = spec.policyIndex,
                 name = spec.name,
                 policyDir = spec.policyDir,
-                availableKhz = KernelNodeIO
-                    .readLongList("${spec.policyDir}/scaling_available_frequencies")
-                    .sorted(),
+                availableKhz = frequencies,
                 governors = KernelNodeIO
                     .readTokenList("${spec.policyDir}/scaling_available_governors"),
-                hwMinKhz = spec.hwMinKhz,
-                hwMaxKhz = spec.hwMaxKhz,
+                hwMinKhz = hwMin,
+                hwMaxKhz = hwMax,
                 defaultGovernor =
                     KernelNodeIO.read("${spec.policyDir}/scaling_governor") ?: "walt",
             )
@@ -126,15 +143,26 @@ class PerfTuner @Inject constructor(@ApplicationContext context: Context) {
     /** Detected GPU capabilities — derived from DeviceProfile's kgsl/devfreq node. */
     val gpuInfo: GpuInfo by lazy {
         val gpu = deviceProfile.gpu
-        val freqs = gpu?.availableFreqsPath
+        val listedFreqs = gpu?.availableFreqsPath
             ?.let { KernelNodeIO.readLongList(it) }
+            ?.filter { it > 0L }
+            ?.distinct()
             ?.sorted() ?: emptyList()
+        val reportedMin = gpu?.devfreqMinPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L } }
+            ?: gpu?.minClockMhzPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L }?.times(1_000_000L) }
+        val reportedMax = gpu?.devfreqMaxPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L } }
+            ?: gpu?.maxClockMhzPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L }?.times(1_000_000L) }
+        val freqs = if (listedFreqs.size > 1) listedFreqs else if (
+            reportedMin != null && reportedMax != null && reportedMax > reportedMin
+        ) {
+            listOf(reportedMin, reportedMax)
+        } else listedFreqs
         GpuInfo(
             availableHz = freqs,
             governors = gpu?.availableGovernorsPath
                 ?.let { KernelNodeIO.readTokenList(it) } ?: emptyList(),
-            hwMinHz = freqs.firstOrNull() ?: 0L,
-            hwMaxHz = freqs.lastOrNull() ?: 0L,
+            hwMinHz = if (listedFreqs.size > 1) freqs.first() else reportedMin ?: freqs.firstOrNull() ?: 0L,
+            hwMaxHz = if (listedFreqs.size > 1) freqs.last() else reportedMax ?: freqs.lastOrNull() ?: 0L,
             defaultGovernor =
                 gpu?.governorPath?.let { KernelNodeIO.read(it) } ?: "msm-adreno-tz",
         )
@@ -155,7 +183,35 @@ class PerfTuner @Inject constructor(@ApplicationContext context: Context) {
     fun cpuLiveMaxKhz(cluster: CpuCluster): Long =
         KernelNodeIO.readLong(ThermalNodes.cpuScalingMax(cluster.policyDir)) ?: 0L
 
-    fun gpuLiveMaxHz(): Long = KernelNodeIO.readLong(ThermalNodes.GPU_DEVFREQ_MAX) ?: 0L
+    fun gpuLiveMaxHz(): Long {
+        val gpu = deviceProfile.gpu
+        return gpu?.devfreqMaxPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L } }
+            ?: gpu?.maxClockMhzPath?.let {
+                KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L }?.times(1_000_000L)
+            }
+            ?: 0L
+    }
+
+    /** Clock controls are offered only when this ROM permits both ends of the range to be written. */
+    fun canTuneCpuRange(cluster: CpuCluster): Boolean =
+        KernelNodeIO.isWritable(ThermalNodes.cpuScalingMin(cluster.policyDir)) &&
+            KernelNodeIO.isWritable(ThermalNodes.cpuScalingMax(cluster.policyDir))
+
+    fun canTuneGpuRange(): Boolean = gpuDevfreqRangeWritable() || gpuKgslRangeWritable()
+
+    private fun gpuDevfreqRangeWritable(): Boolean {
+        val gpu = deviceProfile.gpu ?: return false
+        val minNode = gpu.devfreqMinPath ?: return false
+        val maxNode = gpu.devfreqMaxPath ?: return false
+        return KernelNodeIO.isWritable(minNode) && KernelNodeIO.isWritable(maxNode)
+    }
+
+    private fun gpuKgslRangeWritable(): Boolean {
+        val gpu = deviceProfile.gpu ?: return false
+        val minNode = gpu.minClockMhzPath ?: return false
+        val maxNode = gpu.maxClockMhzPath ?: return false
+        return KernelNodeIO.isWritable(minNode) && KernelNodeIO.isWritable(maxNode)
+    }
 
     // ── Application ─────────────────────────────────────────────────────────
 
@@ -242,49 +298,67 @@ class PerfTuner @Inject constructor(@ApplicationContext context: Context) {
     private fun applyProfile(profile: PerfProfile) {
         cpuClusters.forEach { cluster ->
             val tuning = profile.clusters[cluster.policyIndex] ?: ClusterTuning()
-            applyRange(
-                minNode = ThermalNodes.cpuScalingMin(cluster.policyDir),
-                maxNode = ThermalNodes.cpuScalingMax(cluster.policyDir),
-                minReq = snap(tuning.minKhz, cluster.availableKhz),
-                maxReq = snap(tuning.maxKhz, cluster.availableKhz),
-                hwMin = cluster.hwMinKhz,
-                hwMax = cluster.hwMaxKhz,
-            )
-            applyGovernor(
-                node = ThermalNodes.cpuGovernor(cluster.policyDir),
-                requested = tuning.governor,
-                hwDefault = cluster.defaultGovernor,
-                supported = cluster.governors,
-            )
+            if (cluster.availableKhz.size > 1 && canTuneCpuRange(cluster)) {
+                applyRange(
+                    minNode = ThermalNodes.cpuScalingMin(cluster.policyDir),
+                    maxNode = ThermalNodes.cpuScalingMax(cluster.policyDir),
+                    minReq = snap(tuning.minKhz, cluster.availableKhz),
+                    maxReq = snap(tuning.maxKhz, cluster.availableKhz),
+                    hwMin = cluster.hwMinKhz,
+                    hwMax = cluster.hwMaxKhz,
+                )
+            }
+            val governorNode = ThermalNodes.cpuGovernor(cluster.policyDir)
+            if (tuning.governor == null || KernelNodeIO.isWritable(governorNode)) {
+                applyGovernor(
+                    node = governorNode,
+                    requested = tuning.governor,
+                    hwDefault = cluster.defaultGovernor,
+                    supported = cluster.governors,
+                )
+            }
         }
 
-        if (gpuInfo.availableHz.isNotEmpty()) {
+        val gpu = deviceProfile.gpu
+        if (gpuInfo.availableHz.size > 1) {
             val minHz = snap(profile.gpuMinHz, gpuInfo.availableHz)
             val maxHz = snap(profile.gpuMaxHz, gpuInfo.availableHz)
-            applyRange(
-                minNode = ThermalNodes.GPU_DEVFREQ_MIN,
-                maxNode = ThermalNodes.GPU_DEVFREQ_MAX,
-                minReq = minHz,
-                maxReq = maxHz,
-                hwMin = gpuInfo.hwMinHz,
-                hwMax = gpuInfo.hwMaxHz,
-            )
-            // kgsl MHz mirrors keep the vendor pwrlevel logic consistent
-            applyRange(
-                minNode = ThermalNodes.GPU_MIN_CLOCK_MHZ,
-                maxNode = ThermalNodes.GPU_MAX_CLOCK_MHZ,
-                minReq = minHz?.div(1_000_000),
-                maxReq = maxHz?.div(1_000_000),
-                hwMin = gpuInfo.hwMinHz / 1_000_000,
-                hwMax = gpuInfo.hwMaxHz / 1_000_000,
-            )
-            applyGovernor(
-                node = ThermalNodes.GPU_GOVERNOR,
-                requested = profile.gpuGovernor,
-                hwDefault = gpuInfo.defaultGovernor,
-                supported = gpuInfo.governors,
-            )
+            val devfreqMin = gpu?.devfreqMinPath
+            val devfreqMax = gpu?.devfreqMaxPath
+            if (gpuDevfreqRangeWritable() && devfreqMin != null && devfreqMax != null) {
+                applyRange(
+                    minNode = devfreqMin,
+                    maxNode = devfreqMax,
+                    minReq = minHz,
+                    maxReq = maxHz,
+                    hwMin = gpuInfo.hwMinHz,
+                    hwMax = gpuInfo.hwMaxHz,
+                )
+            }
+            // Some KGSL drivers expose MHz controls without a writable devfreq pair.
+            val kgslMin = gpu?.minClockMhzPath
+            val kgslMax = gpu?.maxClockMhzPath
+            if (gpuKgslRangeWritable() && kgslMin != null && kgslMax != null) {
+                applyRange(
+                    minNode = kgslMin,
+                    maxNode = kgslMax,
+                    minReq = minHz?.div(1_000_000),
+                    maxReq = maxHz?.div(1_000_000),
+                    hwMin = gpuInfo.hwMinHz / 1_000_000,
+                    hwMax = gpuInfo.hwMaxHz / 1_000_000,
+                )
+            }
         }
+        gpu?.governorPath
+            ?.takeIf { profile.gpuGovernor == null || KernelNodeIO.isWritable(it) }
+            ?.let { governorNode ->
+                applyGovernor(
+                    node = governorNode,
+                    requested = profile.gpuGovernor,
+                    hwDefault = gpuInfo.defaultGovernor,
+                    supported = gpuInfo.governors,
+                )
+            }
 
         syncCeilingGuard(profile)
     }
@@ -353,10 +427,20 @@ class PerfTuner @Inject constructor(@ApplicationContext context: Context) {
         val ceilings = buildList {
             cpuClusters.forEach { cluster ->
                 snap(profile.clusters[cluster.policyIndex]?.maxKhz, cluster.availableKhz)
+                    ?.takeIf { cluster.availableKhz.size > 1 && canTuneCpuRange(cluster) }
                     ?.let { add(ThermalNodes.cpuScalingMax(cluster.policyDir) to it) }
             }
-            snap(profile.gpuMaxHz, gpuInfo.availableHz)
-                ?.let { add(ThermalNodes.GPU_DEVFREQ_MAX to it) }
+            val gpuMaxHz = snap(profile.gpuMaxHz, gpuInfo.availableHz)
+                ?.takeIf { gpuInfo.availableHz.size > 1 }
+            val devfreqMaxNode = deviceProfile.gpu?.devfreqMaxPath
+            if (devfreqMaxNode != null && gpuMaxHz != null && gpuDevfreqRangeWritable()) {
+                add(devfreqMaxNode to gpuMaxHz)
+            }
+            if (gpuMaxHz != null && gpuKgslRangeWritable()) {
+                deviceProfile.gpu?.maxClockMhzPath?.let {
+                    add(it to gpuMaxHz / 1_000_000L)
+                }
+            }
         }
         guardJob?.cancel()
         if (ceilings.isEmpty()) return

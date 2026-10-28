@@ -4,6 +4,7 @@
  */
 package org.yasvara.pentas.ui.tuning
 
+import android.content.Context
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.compose.foundation.Canvas
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,12 +41,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.yasvara.pentas.audio.DolbyBridge
 import org.yasvara.pentas.audio.DolbyProfileClient
 import org.yasvara.pentas.data.AngleDriver
+import org.yasvara.pentas.data.RenderResolutionState
+import org.yasvara.pentas.data.encodeRenderScale
 import org.yasvara.pentas.thermal.PerfTuner
 import org.yasvara.pentas.touch.KernelTouchFilterClient
 import org.yasvara.pentas.touch.RateMeter
@@ -65,9 +68,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private fun factor(f: Float): String =
-    if (abs(f - 1f) < 0.001f) "1.0" else "%.2f".format(f).trimEnd('0').trimEnd('.').let { if ('.' in it) it else "$it.0" }
-
 @Composable fun LiveTag() = Tag("Live")
 @Composable fun RestartTag() = Tag("Restart", warn = true)
 
@@ -77,26 +77,66 @@ private fun factor(f: Float): String =
 fun GraphicsEditor(pkg: String, game: Boolean = true) {
     val t = rememberTuning()
     val ctx = LocalContext.current
-    var scale by remember(pkg) { mutableFloatStateOf(t.perApp().resolution(pkg).toFloatOrNull() ?: 1f) }
-    val screen = remember {
-        val b = ctx.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
-        max(b.width(), b.height()) to min(b.width(), b.height())
+    val perApp = t.perApp()
+    val scope = rememberCoroutineScope()
+    var resolution by remember(pkg) { mutableStateOf<RenderResolutionState?>(null) }
+    var scale by remember(pkg) { mutableFloatStateOf(1f) }
+    var applying by remember(pkg) { mutableStateOf(false) }
+    var resolutionError by remember(pkg) { mutableStateOf<String?>(null) }
+    val screen = remember(ctx) { ctx.safeScreenSize() }
+    LaunchedEffect(pkg, game) {
+        if (game) {
+            val state = withContext(Dispatchers.IO) { perApp.resolutionState(pkg) }
+            resolution = state
+            scale = state.scale
+        }
     }
-    fun commit(f: Float) { scale = f; t.perApp().setResolution(pkg, factor(f)) }
+    fun commit(f: Float) {
+        if (resolution?.available != true || applying) return
+        applying = true
+        scope.launch {
+            val (applied, state) = withContext(Dispatchers.IO) {
+                perApp.setResolution(pkg, encodeRenderScale(f)) to perApp.resolutionState(pkg)
+            }
+            resolution = state
+            scale = state.scale
+            resolutionError = if (applied) null else "Couldn't apply render resolution. Try again."
+            applying = false
+        }
+    }
 
     if (game) Block(padding = 10.dp) {
-        SettingRow("Render resolution", tag = { RestartTag() }, value = "%.2f×".format(scale))
-        ScaleFigure(scale, screen)
+        val state = resolution
+        SettingRow("Render resolution", tag = {
+            when {
+                state == null -> Tag("Checking")
+                !state.available -> Tag("Unavailable", warn = true)
+                applying -> Tag("Applying")
+                else -> RestartTag()
+            }
+        }, value = "%.2f×".format(scale))
+        if (state?.available == true) ScaleFigure(scale, screen)
         Slider(min(scale, 1f), { scale = it }, range = 0.25f..1f, steps = 14, onCommit = ::commit,
-            description = "Render resolution")
-    }
-    Block(padding = 10.dp) {
-        var style by remember(pkg) { mutableIntStateOf(t.perApp().displayStyle(pkg)) }
-        SettingRow("Display color", tag = { LiveTag() })
-        Segmented(
-            listOf("Original" to 0, "Vivid" to 1, "Saturated" to 2, "P3" to 3, "sRGB" to 4),
-            selected = style, onSelect = { style = it; t.perApp().setDisplayStyle(pkg, it) },
+            description = "Render resolution", enabled = state?.available == true && !applying)
+        Text(
+            resolutionError ?: state?.unavailableReason
+                ?: "Changes game rendering detail, not screen resolution. Fully close and reopen the game to apply.",
+            style = label(11.sp),
+            color = if (resolutionError == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
         )
+    }
+    val colorOptions = remember(perApp) { perApp.displayStyleOptions() }
+    Block(padding = 10.dp) {
+        var style by remember(pkg) { mutableIntStateOf(perApp.displayStyle(pkg)) }
+        var colorError by remember(pkg) { mutableStateOf(false) }
+        SettingRow("Display color", tag = { if (colorOptions.isEmpty()) Tag("Unavailable") else LiveTag() })
+        if (colorOptions.isNotEmpty()) Segmented(colorOptions,
+            selected = style, onSelect = {
+                colorError = !perApp.setDisplayStyle(pkg, it)
+                if (!colorError) style = it
+            })
+        if (colorError) Text("Couldn't apply display color. Try again.",
+            style = label(11.sp), color = MaterialTheme.colorScheme.error)
     }
     if (!game) return
     Section("Advanced")
@@ -115,7 +155,7 @@ fun GraphicsEditor(pkg: String, game: Boolean = true) {
     }
 }
 
-/** Screen and drawn buffer as nested rectangles, sized to scale. */
+/** Screen and target buffer as nested rectangles, sized to scale. */
 @Composable
 private fun ScaleFigure(scale: Float, screen: Pair<Int, Int>) {
     val cs = MaterialTheme.colorScheme
@@ -128,9 +168,18 @@ private fun ScaleFigure(scale: Float, screen: Pair<Int, Int>) {
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("Screen  ${w}×$h", style = num(11.sp, 500), color = cs.onSurfaceVariant)
-            Text("Drawn  ${(w * scale).roundToInt()}×${(h * scale).roundToInt()}", style = num(11.sp, 600), color = cs.onSurface)
+            Text("Target  ${(w * scale).roundToInt()}×${(h * scale).roundToInt()}", style = num(11.sp, 600), color = cs.onSurface)
         }
     }
+}
+
+/** Window metrics can be unavailable in service/overlay contexts; keep the preview safe there. */
+private fun Context.safeScreenSize(): Pair<Int, Int> {
+    val bounds = runCatching { getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds }
+        .getOrNull()
+    val width = bounds?.width()?.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    val height = bounds?.height()?.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    return max(width, height) to min(width, height)
 }
 
 // ── clocks ────────────────────────────────────────────────────────────────
@@ -143,7 +192,8 @@ fun GameClocks(pkg: String) {
     var profile by remember(pkg) { mutableStateOf(perf.loadProfile(pkg) ?: PerfTuner.PerfProfile()) }
     var pendingScope by remember(pkg) { mutableIntStateOf(scope) }
     var confirmScope by remember(pkg) { mutableStateOf(false) }
-    Block(padding = 10.dp) {
+    var tuningAvailable by remember(perf) { mutableStateOf(false) }
+    if (tuningAvailable) Block(padding = 10.dp) {
         Segmented(
             listOf("This game" to PerfTuner.ClockScope.PER_APP, "Global" to PerfTuner.ClockScope.GLOBAL),
             selected = scope, onSelect = {
@@ -157,7 +207,7 @@ fun GameClocks(pkg: String) {
             },
         )
     }
-    if (confirmScope) ClockWarningDialog(
+    if (confirmScope && tuningAvailable) ClockWarningCard(
         title = if (pendingScope == PerfTuner.ClockScope.GLOBAL) "Use global clocks for this game?" else "Use this game's clocks?",
         message = if (pendingScope == PerfTuner.ClockScope.GLOBAL) {
             "This game will follow the global CPU and GPU limits. Higher limits can increase heat and battery drain, and thermal control may still reduce performance."
@@ -176,6 +226,7 @@ fun GameClocks(pkg: String) {
     ClockEditor(
         perf, if (global) perf.loadGlobalProfile() else profile, editable = !global,
         warningKey = pkg,
+        onAvailabilityChanged = { tuningAvailable = it },
         onCommit = { profile = it; perf.saveProfileFor(pkg, it) },
     )
 }
@@ -187,6 +238,7 @@ fun ClockEditor(
     profile: PerfTuner.PerfProfile,
     editable: Boolean = true,
     warningKey: Any = profile,
+    onAvailabilityChanged: (Boolean) -> Unit = {},
     onCommit: (PerfTuner.PerfProfile) -> Unit,
 ) {
     val cs = MaterialTheme.colorScheme
@@ -195,6 +247,21 @@ fun ClockEditor(
     var clockWarningAcknowledged by remember(warningKey) { mutableStateOf(false) }
     var live by remember { mutableStateOf(emptyMap<Int, Long>()) }
     var gpuCap by remember { mutableLongStateOf(0L) }
+    var cpuRanges by remember(perf) { mutableStateOf(emptyList<PerfTuner.CpuCluster>()) }
+    var gpuInfo by remember(perf) { mutableStateOf<PerfTuner.GpuInfo?>(null) }
+    var writableCpu by remember(perf) { mutableStateOf<Map<Int, Boolean>>(emptyMap()) }
+    var writableGpu by remember(perf) { mutableStateOf(false) }
+    var capabilitiesReady by remember(perf) { mutableStateOf(false) }
+    val hasGpuRange = gpuInfo?.availableHz?.size?.let { it > 1 } == true
+    val tuningAvailable = capabilitiesReady &&
+        (cpuRanges.any { writableCpu[it.policyIndex] == true } || hasGpuRange && writableGpu)
+    LaunchedEffect(tuningAvailable) {
+        if (!tuningAvailable) {
+            draftProfile = profile
+            showClockConfirmation = false
+        }
+        onAvailabilityChanged(tuningAvailable)
+    }
 
     fun applyClockChange(updated: PerfTuner.PerfProfile) {
         draftProfile = updated
@@ -206,46 +273,91 @@ fun ClockEditor(
         showClockConfirmation = false
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(perf) {
         while (true) {
-            live = perf.cpuClusters.associate { it.policyIndex to perf.cpuLiveMaxKhz(it) }
-            gpuCap = perf.gpuLiveMaxHz()
+            val hardware = withContext(Dispatchers.IO) {
+                val cpus = perf.cpuClusters.filter { it.availableKhz.size > 1 }
+                Triple(cpus, perf.gpuInfo, cpus.associate { it.policyIndex to perf.canTuneCpuRange(it) } to perf.canTuneGpuRange())
+            }
+            cpuRanges = hardware.first
+            gpuInfo = hardware.second
+            writableCpu = hardware.third.first
+            writableGpu = hardware.third.second
+            capabilitiesReady = true
+            delay(15_000)
+        }
+    }
+    LaunchedEffect(perf) {
+        while (true) {
+            val readings = withContext(Dispatchers.IO) {
+                perf.cpuClusters.associate { it.policyIndex to perf.cpuLiveMaxKhz(it) } to perf.gpuLiveMaxHz()
+            }
+            live = readings.first
+            gpuCap = readings.second
             delay(1500)
         }
     }
-    Text(
+    if (tuningAvailable && editable) Text(
         "Recommended: keep Default clocks. Changing limits can increase heat, drain, instability or reduce performance. Pentas asks before applying a clock change.",
         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
         style = label(11.sp),
         color = cs.onSurfaceVariant,
     )
-    Block(padding = 10.dp) {
-        perf.cpuClusters.filter { it.availableKhz.size > 1 }.forEach { c ->
+    if (cpuRanges.isNotEmpty()) Block(padding = 10.dp) {
+        cpuRanges.forEach { c ->
             val t = draftProfile.clusters[c.policyIndex] ?: PerfTuner.ClusterTuning()
+            val accessGranted = if (capabilitiesReady) writableCpu[c.policyIndex] == true else null
             ClockRange(
                 c.name, c.availableKhz, t.minKhz ?: c.hwMinKhz, t.maxKhz ?: c.hwMaxKhz, live[c.policyIndex] ?: 0L,
-                editable, format = { "%.2f".format(it / 1e6) }, unit = "GHz",
+                editable && accessGranted == true, accessGranted,
+                format = { "%.2f".format(it / 1e6) }, unit = "GHz",
             ) { lo, hi ->
                 val tuned = t.copy(minKhz = lo.takeIf { it != c.hwMinKhz }, maxKhz = hi.takeIf { it != c.hwMaxKhz })
                 applyClockChange(draftProfile.copy(clusters = draftProfile.clusters + (c.policyIndex to tuned)))
             }
         }
     }
-    val gpu = perf.gpuInfo
-    if (gpu.availableHz.size > 1) Block(padding = 10.dp) {
+    val gpu = gpuInfo
+    if (hasGpuRange) Block(padding = 10.dp) {
+        val detectedGpu = requireNotNull(gpu)
         ClockRange(
-            "GPU", gpu.availableHz.sorted(), draftProfile.gpuMinHz ?: gpu.hwMinHz, draftProfile.gpuMaxHz ?: gpu.hwMaxHz, gpuCap,
-            editable, format = { "${it / 1_000_000}" }, unit = "MHz",
+            "GPU", detectedGpu.availableHz, draftProfile.gpuMinHz ?: detectedGpu.hwMinHz,
+            draftProfile.gpuMaxHz ?: detectedGpu.hwMaxHz, gpuCap,
+            editable && capabilitiesReady && writableGpu,
+            if (capabilitiesReady) writableGpu else null,
+            format = { "${it / 1_000_000}" }, unit = "MHz",
         ) { lo, hi ->
-            applyClockChange(draftProfile.copy(gpuMinHz = lo.takeIf { it != gpu.hwMinHz }, gpuMaxHz = hi.takeIf { it != gpu.hwMaxHz }))
+            applyClockChange(draftProfile.copy(
+                gpuMinHz = lo.takeIf { it != detectedGpu.hwMinHz },
+                gpuMaxHz = hi.takeIf { it != detectedGpu.hwMaxHz },
+            ))
         }
     }
-    if (editable && !draftProfile.isDefault) Text(
+    val unavailableCpu = cpuRanges.any { writableCpu[it.policyIndex] == false }
+    if (capabilitiesReady && (unavailableCpu || hasGpuRange && !writableGpu)) Text(
+        "Manual clock tuning is unavailable for these controls. Your ROM manages their limits automatically; monitoring still works.",
+        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        style = label(11.sp),
+        color = cs.onSurfaceVariant,
+    )
+    if (!capabilitiesReady) Text(
+        "Checking CPU and GPU clock support…",
+        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        style = label(11.sp),
+        color = cs.onSurfaceVariant,
+    )
+    if (capabilitiesReady && cpuRanges.isEmpty() && !hasGpuRange) Text(
+        "No CPU or GPU clock tables were found on this device.",
+        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        style = label(11.sp),
+        color = cs.onSurfaceVariant,
+    )
+    if (editable && tuningAvailable && !draftProfile.isDefault) Text(
         "Reset to stock",
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { applyClockChange(PerfTuner.PerfProfile()) }.padding(8.dp),
         style = label(12.sp, 600), color = cs.error,
     )
-    if (showClockConfirmation) ClockWarningDialog(
+    if (showClockConfirmation && tuningAvailable) ClockWarningCard(
         title = "Apply clock limits?",
         message = "CPU or GPU limits can raise heat and battery drain, reduce stability or lower performance. Keep Default unless you have a specific reason to tune them.",
         confirmLabel = "Apply limits",
@@ -259,20 +371,29 @@ fun ClockEditor(
 }
 
 @Composable
-private fun ClockWarningDialog(
+private fun ClockWarningCard(
     title: String,
     message: String,
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(message) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmLabel) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+    val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
+    Block(color = cs.tertiaryContainer, padding = 12.dp) {
+        Text(title, style = label(15.sp, 650), color = cs.onTertiaryContainer)
+        Text(message, style = label(12.sp), color = cs.onTertiaryContainer)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = {
+                view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                onDismiss()
+            }) { Text("Cancel") }
+            TextButton(onClick = {
+                view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                onConfirm()
+            }) { Text(confirmLabel) }
+        }
+    }
 }
 
 /** One clock domain: floor and ceiling over [table]; a tag shows a lower live ceiling. */
@@ -284,15 +405,25 @@ private fun ClockRange(
     max: Long,
     liveCap: Long,
     editable: Boolean,
+    accessGranted: Boolean?,
     format: (Long) -> String,
     unit: String,
     onCommit: (Long, Long) -> Unit,
 ) {
-    var lo by remember(name, min) { mutableIntStateOf(table.indexOfNearest(min)) }
-    var hi by remember(name, max) { mutableIntStateOf(table.indexOfNearest(max)) }
+    if (table.size < 2) return
+    if (accessGranted != true) {
+        SettingRow(name,
+            value = liveCap.takeIf { it > 0L }?.let { "${format(it)} $unit" } ?: "Automatic",
+            tag = { Tag(if (accessGranted == null) "Checking" else "Unavailable") })
+        return
+    }
+    val initialRange = remember(name, min, max, table) { clockRangeIndices(table, min, max) }
+    var lo by remember(name, min, max, table) { mutableIntStateOf(initialRange.first) }
+    var hi by remember(name, min, max, table) { mutableIntStateOf(initialRange.second) }
     val ceiling = liveCap.takeIf { it in 1 until table[hi] }
+    val accessTag: (@Composable () -> Unit)? = ceiling?.let { value -> { Tag(format(value), warn = true) } }
     SettingRow(name, value = "${format(table[lo])} – ${format(table[hi])} $unit",
-        tag = ceiling?.let { { Tag(format(it), warn = true) } })
+        tag = accessTag)
     RangeSlider(
         lo, hi, table.size,
         onChange = { a, b -> if (editable) { lo = a; hi = b } },

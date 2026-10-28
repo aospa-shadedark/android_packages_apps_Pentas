@@ -8,6 +8,7 @@ import android.content.Context
 import android.os.SystemProperties
 import android.os.UserHandle
 import android.provider.Settings
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,24 +26,28 @@ class SettingsIO @Inject constructor(
     fun read(key: String): String? =
         Settings.System.getStringForUser(resolver, key, UserHandle.USER_CURRENT)
 
-    fun write(key: String, json: String) {
+    fun write(key: String, json: String): Boolean =
         runCatching {
             Settings.System.putStringForUser(resolver, key, json, UserHandle.USER_CURRENT)
-        }
-    }
+        }.onFailure {
+            Log.w(TAG, "Failed to write setting '$key'", it)
+        }.getOrDefault(false)
 
-    fun setProp(name: String, value: String) {
-        runCatching { SystemProperties.set(name, value) }
-    }
+    fun setProp(name: String, value: String): Boolean =
+        runCatching {
+            SystemProperties.set(name, value)
+            true
+        }.onFailure {
+            Log.w(TAG, "Failed to set property '$name'", it)
+        }.getOrDefault(false)
 
     fun readPropLong(name: String, default: Long = 0L): Long =
         runCatching { SystemProperties.getLong(name, default) }.getOrDefault(default)
 
     // ── Per-app JSON convenience (delegates to PerAppJson) ──
 
-    fun putPerApp(key: String, pkg: String, value: Any?) {
+    fun putPerApp(key: String, pkg: String, value: Any?): Boolean =
         write(key, PerAppJson.put(read(key), pkg, value))
-    }
 
     fun getPerAppString(key: String, pkg: String, default: String): String =
         PerAppJson.getString(read(key), pkg, default)
@@ -52,4 +57,8 @@ class SettingsIO @Inject constructor(
 
     fun getPerAppBoolean(key: String, pkg: String, default: Boolean): Boolean =
         PerAppJson.getBoolean(read(key), pkg, default)
+
+    companion object {
+        private const val TAG = "SettingsIO"
+    }
 }

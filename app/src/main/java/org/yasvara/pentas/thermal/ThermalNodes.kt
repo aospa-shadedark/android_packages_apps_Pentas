@@ -40,8 +40,6 @@ object ThermalNodes {
         "/sys/class/xm_power/charger/charger_thermal/wired_chg_curr2"
     const val SMART_NIGHT = "/sys/class/xm_power/charger/smart_charge/smart_night"
 
-    /** PMIC-side board thermistor; runs hotter than the cell. The cell temperature is power_supply/battery/temp. */
-    const val BATT_THERM_ZONE = "/sys/class/thermal/thermal_zone65/temp"
     const val INPUT_SUSPEND =
         "/sys/devices/platform/soc/soc:mca_charge_interface/input_suspend"
 
@@ -76,15 +74,7 @@ object ThermalNodes {
     const val DISP_PARAM_DC_ON = "08 1"
     const val DISP_PARAM_DC_OFF = "08 0"
 
-    // ── CPU cpufreq (per-cluster policies: 2×A725 / 3×A725 / 2×A725 / X4) ──
-    val CPU_POLICY_DIRS = arrayOf(
-        "/sys/devices/system/cpu/cpufreq/policy0",
-        "/sys/devices/system/cpu/cpufreq/policy2",
-        "/sys/devices/system/cpu/cpufreq/policy5",
-        "/sys/devices/system/cpu/cpufreq/policy7",
-    )
-    val CPU_CLUSTER_NAMES = arrayOf("Silver", "Gold", "Gold+", "Prime")
-
+    // ── CPU cpufreq policies: indexed and named at runtime by DeviceProfiles ─
     fun cpuScalingMax(policyDir: String) = "$policyDir/scaling_max_freq"
     fun cpuScalingMin(policyDir: String) = "$policyDir/scaling_min_freq"
     fun cpuGovernor(policyDir: String) = "$policyDir/scaling_governor"
@@ -94,19 +84,4 @@ object ThermalNodes {
     fun cpuHwMin(policyDir: String) = "$policyDir/cpuinfo_min_freq"
     fun cpuCurFreq(policyDir: String) = "$policyDir/scaling_cur_freq"
 
-    // ── Adreno GPU (kgsl-3d0) ───────────────────────────────────────────────
-    private const val KGSL = "/sys/class/kgsl/kgsl-3d0"
-    const val GPU_MIN_CLOCK_MHZ = "$KGSL/min_clock_mhz"
-    const val GPU_MAX_CLOCK_MHZ = "$KGSL/max_clock_mhz"
-    const val GPU_AVAILABLE_FREQS = "$KGSL/gpu_available_frequencies" // Hz
-    const val GPU_BUSY_PERCENT = "$KGSL/gpu_busy_percentage"
-    const val GPU_CUR_FREQ = "$KGSL/devfreq/cur_freq" // Hz
-    const val GPU_DEVFREQ_MIN = "$KGSL/devfreq/min_freq" // Hz
-    const val GPU_DEVFREQ_MAX = "$KGSL/devfreq/max_freq" // Hz
-    const val GPU_GOVERNOR = "$KGSL/devfreq/governor"
-    const val GPU_AVAILABLE_GOVERNORS = "$KGSL/devfreq/available_governors"
-
-    // ── Telemetry (read-only) ───────────────────────────────────────────────
-    const val CPU_TEMP = "/sys/class/thermal/thermal_zone9/temp" // cpu-big m°C
-    const val GPU_TEMP = "/sys/class/thermal/thermal_zone24/temp" // gpu m°C
 }

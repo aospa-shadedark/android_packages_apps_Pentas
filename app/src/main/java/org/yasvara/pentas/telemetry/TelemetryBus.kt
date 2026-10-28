@@ -160,7 +160,11 @@ class TelemetryBus @Inject constructor(
         val gpu = profile.gpu
         val gpuUsage = GpuTelemetry.readBusy(gpu?.busyPaths.orEmpty(), KernelNodeIO::read) ?: 0
         val gpuFreqMhz = readGpuFreqMhz(gpu)
-        val gpuScalingMax = gpu?.devfreqMaxPath?.let { KernelNodeIO.readLong(it) } ?: 0L
+        val gpuScalingMax = gpu?.devfreqMaxPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L } }
+            ?: gpu?.maxClockMhzPath?.let {
+                KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L }?.times(1_000_000L)
+            }
+            ?: 0L
         val gpuHwMax = gpuHwMaxHz(gpu)
         val gpuCeiling = gpuScalingMax in 1 until gpuHwMax - 1_000_000L
 
@@ -303,8 +307,14 @@ class TelemetryBus @Inject constructor(
     private fun gpuHwMaxHz(gpu: org.yasvara.pentas.device.GpuSpec?): Long {
         if (gpu == null) return 0L
         if (gpuHwMaxCache > 0) return gpuHwMaxCache
-        val list = gpu.availableFreqsPath?.let { KernelNodeIO.readLongList(it) }.orEmpty()
-        gpuHwMaxCache = list.maxOrNull() ?: 0L
+        val list = gpu.availableFreqsPath?.let { KernelNodeIO.readLongList(it) }
+            ?.filter { it > 0L }.orEmpty()
+        gpuHwMaxCache = list.maxOrNull()
+            ?: gpu.devfreqMaxPath?.let { KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L } }
+            ?: gpu.maxClockMhzPath?.let {
+                KernelNodeIO.readLong(it)?.takeIf { value -> value > 0L }?.times(1_000_000L)
+            }
+            ?: 0L
         return gpuHwMaxCache
     }
     private fun meminfoMap(): Map<String, Long> = runCatching {
