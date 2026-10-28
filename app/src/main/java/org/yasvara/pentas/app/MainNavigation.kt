@@ -9,14 +9,20 @@ import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.gestures.DragScope
+import androidx.compose.foundation.gestures.DraggableState
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,9 +32,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +48,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +63,9 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import org.yasvara.pentas.R
 import org.yasvara.pentas.data.fpsstats.SessionListItem
 import org.yasvara.pentas.settings.fpsstats.FpsStatsActivity
@@ -60,11 +78,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private enum class MainTab(val title: String, val icon: Int) {
     GAMES("Games", R.drawable.sym_videogame_asset),
@@ -75,61 +98,156 @@ private enum class MainTab(val title: String, val icon: Int) {
 /** Keep the three main destinations in one activity without building up a screen stack. */
 @Composable
 fun PentasMain() {
-    var tab by rememberSaveable { mutableStateOf(MainTab.GAMES) }
+    val pagerState = rememberPagerState(pageCount = { MainTab.entries.size })
     val tabState = rememberSaveableStateHolder()
+    val navigationScope = rememberCoroutineScope()
+    val hapticView = LocalView.current
     var cachedGames by remember { mutableStateOf(emptyList<String>()) }
     var cachedSessions by remember { mutableStateOf(emptyList<SessionListItem>()) }
-    BackHandler(tab != MainTab.GAMES) { tab = MainTab.GAMES }
+    BackHandler(pagerState.currentPage != MainTab.GAMES.ordinal || pagerState.isScrollInProgress) {
+        navigationScope.launch { pagerState.animateScrollToPage(MainTab.GAMES.ordinal) }
+    }
+    LaunchedEffect(pagerState, hapticView) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .drop(1)
+            .collect { hapticView.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK) }
+    }
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Box(Modifier.weight(1f)) {
-            tabState.SaveableStateProvider(tab.name) {
-                when (tab) {
+        HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
+            val destination = MainTab.entries[page]
+            tabState.SaveableStateProvider(destination.name) {
+                when (destination) {
                     MainTab.GAMES -> Library(cachedGames) { cachedGames = it }
                     MainTab.SESSIONS -> SessionsTab(cachedSessions) { cachedSessions = it }
-                    MainTab.SETTINGS -> PentasSettingsScreen(onBack = { tab = MainTab.GAMES }, showBack = false)
+                    MainTab.SETTINGS -> PentasSettingsScreen(
+                        onBack = { navigationScope.launch { pagerState.animateScrollToPage(MainTab.GAMES.ordinal) } },
+                        showBack = false,
+                    )
                 }
             }
         }
-        MainNavigationBar(tab) { tab = it }
+        MainNavigationBar(pagerState) { destination ->
+            navigationScope.launch { pagerState.animateScrollToPage(destination.ordinal) }
+        }
     }
 }
 
 @Composable
-private fun MainNavigationBar(selected: MainTab, onSelect: (MainTab) -> Unit) {
+private fun MainNavigationBar(pagerState: PagerState, onSelect: (MainTab) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val view = LocalView.current
-    Row(
-        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(28.dp)).background(cs.surfaceContainerLow)
-            .border(1.dp, cs.outlineVariant, RoundedCornerShape(28.dp)).padding(5.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    Surface(
+        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = cs.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant),
     ) {
-        MainTab.entries.forEach { tab ->
-            val active = selected == tab
-            val interaction = remember { MutableInteractionSource() }
-            val pressed by interaction.collectIsPressedAsState()
-            val scale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "navigation press")
-            val background by animateColorAsState(
-                if (active) cs.secondaryContainer else cs.surfaceContainerLow, label = "navigation color")
-            val foreground = if (active) cs.onSecondaryContainer else cs.onSurfaceVariant
-            Column(
-                Modifier.weight(1f).heightIn(min = 58.dp).graphicsLayer { scaleX = scale; scaleY = scale }
-                    .clip(RoundedCornerShape(22.dp)).background(background)
-                    .selectable(selected = active, role = Role.Tab,
-                        interactionSource = interaction, indication = null) {
-                        if (!active) {
-                            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
-                            onSelect(tab)
+        val density = LocalDensity.current
+        val layoutDirection = LocalLayoutDirection.current
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(5.dp).clip(RoundedCornerShape(23.dp))) {
+            val itemWidth = maxWidth / MainTab.entries.size
+            val itemWidthPx = with(density) { itemWidth.toPx() }.coerceAtLeast(1f)
+            val dragScale by rememberUpdatedState(
+                pagerState.layoutInfo.pageSize / itemWidthPx *
+                    if (layoutDirection == LayoutDirection.Rtl) -1f else 1f,
+            )
+            val dragState = remember(pagerState) {
+                object : DraggableState {
+                    override fun dispatchRawDelta(delta: Float) {
+                        pagerState.dispatchRawDelta(delta * dragScale)
+                    }
+
+                    override suspend fun drag(
+                        dragPriority: MutatePriority,
+                        block: suspend DragScope.() -> Unit,
+                    ) {
+                        pagerState.scroll(dragPriority) {
+                            val pagerScroll = this
+                            val dragScope = object : DragScope {
+                                override fun dragBy(pixels: Float) {
+                                    pagerScroll.scrollBy(pixels * dragScale)
+                                }
+                            }
+                            dragScope.block()
                         }
-                    }.padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
+                    }
+                }
+            }
+            val position = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+                .coerceIn(0f, MainTab.entries.lastIndex.toFloat())
+            val activeIndex = position.roundToInt()
+            val stretch = (abs(position - activeIndex) * 2f).coerceIn(0f, 1f)
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 58.dp).draggable(
+                    state = dragState,
+                    orientation = Orientation.Horizontal,
+                    onDragStopped = {
+                        val target = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+                            .roundToInt().coerceIn(0, MainTab.entries.lastIndex)
+                        pagerState.animateScrollToPage(target)
+                    },
+                ),
             ) {
-                Glyph(tab.icon, foreground, 21.dp)
-                Text(tab.title, style = label(11.sp, if (active) 650 else 500),
-                    color = foreground)
+                Box(
+                    Modifier.offset(x = itemWidth * position + 4.dp)
+                        .width((itemWidth - 8.dp).coerceAtLeast(0.dp))
+                        .height(58.dp)
+                        .padding(vertical = 2.dp)
+                        .graphicsLayer { scaleX = 1f + stretch * 0.12f }
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(cs.secondaryContainer),
+                )
+                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                    MainTab.entries.forEachIndexed { index, tab ->
+                        MainNavigationItem(
+                            modifier = Modifier.weight(1f),
+                            tab = tab,
+                            active = activeIndex == index,
+                            onSelect = { onSelect(tab) },
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun MainNavigationItem(
+    modifier: Modifier,
+    tab: MainTab,
+    active: Boolean,
+    onSelect: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(120),
+        label = "navigation item press",
+    )
+    val foreground by animateColorAsState(
+        targetValue = if (active) cs.onSecondaryContainer else cs.onSurfaceVariant,
+        label = "navigation item content color",
+    )
+    Column(
+        modifier = modifier.clip(RoundedCornerShape(22.dp))
+            .selectable(
+                selected = active,
+                role = Role.Tab,
+                interactionSource = interaction,
+                indication = null,
+                onClick = { onSelect() },
+            )
+            .heightIn(min = 58.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Glyph(tab.icon, foreground, 20.dp)
+        Text(tab.title, style = label(11.sp, if (active) 650 else 500), color = foreground)
     }
 }
 

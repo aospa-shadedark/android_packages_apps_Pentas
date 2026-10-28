@@ -10,6 +10,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -47,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import org.yasvara.pentas.R
 import org.yasvara.pentas.charging.ChargingProfileListActivity
 import org.yasvara.pentas.device.DeviceSupport
+import org.yasvara.pentas.settings.diagnostics.DiagnosticsActivity
 import org.yasvara.pentas.settings.fpsstats.FpsStatsActivity
 import org.yasvara.pentas.thermal.custom.CustomProfileListActivity
 import org.yasvara.pentas.ui.kit.Glyph
@@ -71,6 +75,15 @@ private data class HelpTopic(
 
 private val helpTopics = listOf(
     HelpTopic(
+        "Get around Pentas",
+        "The bottom bar links your game library, sessions and app settings.",
+        listOf(
+            "Tap Games, Sessions or Settings in the bottom bar, or swipe horizontally between those pages.",
+            "The selected bar item follows the page motion. You can also drag the bar itself to move between tabs.",
+            "Press Back from Sessions or Settings to return to Games.",
+        ), "navigation tabs bottom bar swipe games sessions settings",
+    ),
+    HelpTopic(
         "Add games and set profiles",
         "Keep each game's controls together, with global settings as a fallback.",
         listOf(
@@ -78,6 +91,15 @@ private val helpTopics = listOf(
             "Open a game card to find its Graphics, Touch, Performance and Sound controls.",
             "Choose Follow global/default when you want that game to inherit the shared setting.",
         ), "library add app graphics touch performance sound profile global",
+    ),
+    HelpTopic(
+        "Graphics and app controls",
+        "Graphics choices are saved per app and use Android or ROM controls where available.",
+        listOf(
+            "Open a game and choose Graphics. Render resolution below 1× uses Android Game Mode and takes effect the next time the game starts.",
+            "Display color and GPU composition use platform controls. ANGLE appears only when its system driver is detected; driver changes take effect on the next launch.",
+            "If a game looks wrong after changing a graphics option, restore its default and relaunch it.",
+        ), "graphics resolution scale color ANGLE composition app game restart",
     ),
     HelpTopic(
         "Use the in-game sidebar",
@@ -112,7 +134,7 @@ private val helpTopics = listOf(
         listOf(
             "Open a game's Performance controls for its limits, or use Global tuning from Games for the shared profile.",
             "Default limits are recommended. Pentas asks you to confirm before applying clock changes; higher limits can increase heat and battery use and may cause instability or throttling.",
-            "If a clock control is missing, the device or kernel may not expose a usable frequency table.",
+            "Pentas discovers CPU/GPU frequency tables from the running device. A detected control marked read-only means the ROM or kernel does not grant Pentas write access; the app cannot grant itself that access. Open Diagnostics from Help to copy the paths Pentas found when reporting a missing control.",
         ), "clock cpu gpu performance heat warning default tuning",
     ),
     HelpTopic(
@@ -175,6 +197,9 @@ private fun HelpScreen(onBack: () -> Unit) {
             HelpShortcut("Settings", R.drawable.sym_settings) {
                 context.startActivity(Intent(context, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
             }
+            HelpShortcut("Diagnostics", R.drawable.sym_developer_board) {
+                context.startActivity(Intent(context, DiagnosticsActivity::class.java))
+            }
         }
 
         Row(
@@ -208,7 +233,7 @@ private fun HelpScreen(onBack: () -> Unit) {
         ) {
             Text("Feature availability", style = label(14.sp, 650), color = cs.onSecondaryContainer)
             Text(
-                "Pentas checks device and ROM support. Some controls or readings may be unavailable when the kernel, system service or permission is missing. Keep default performance and thermal settings if you are unsure.",
+                "Pentas checks the device at runtime, so detection does not need a device-tree entry for each model. Some controls still require ROM or kernel access; if a clock control is read-only, only the system image can grant write permission. Keep default performance and thermal settings if you are unsure.",
                 style = label(12.5.sp), color = cs.onSecondaryContainer,
             )
         }
@@ -221,6 +246,11 @@ private fun HelpScreen(onBack: () -> Unit) {
         }
         visible.forEach { topic ->
             val isOpen = expanded == topic.title
+            val arrowRotation by animateFloatAsState(
+                if (isOpen) 180f else 0f,
+                animationSpec = spring(dampingRatio = 0.82f, stiffness = 480f),
+                label = "help topic arrow",
+            )
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(cs.surfaceContainer)
                     .clickable(role = Role.Button) {
@@ -235,7 +265,8 @@ private fun HelpScreen(onBack: () -> Unit) {
                         Text(topic.summary, style = label(12.sp), color = cs.onSurfaceVariant)
                     }
                     Icon(Sym.ArrowDropDown, contentDescription = if (isOpen) "Collapse" else "Expand",
-                        tint = cs.onSurfaceVariant, modifier = Modifier.size(24.dp))
+                        tint = cs.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = arrowRotation })
                 }
                 AnimatedVisibility(isOpen) {
                     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -267,9 +298,13 @@ private fun HelpScreen(onBack: () -> Unit) {
 @Composable
 private fun HelpShortcut(title: String, icon: Int, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
+    val view = LocalView.current
     Row(
         Modifier.clip(RoundedCornerShape(16.dp)).background(cs.surfaceContainerHigh)
-            .clickable(role = Role.Button) { onClick() }.padding(horizontal = 12.dp, vertical = 10.dp),
+            .clickable(role = Role.Button) {
+                view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                onClick()
+            }.padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {

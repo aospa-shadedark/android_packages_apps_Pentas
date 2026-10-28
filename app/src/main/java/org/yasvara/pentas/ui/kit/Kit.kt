@@ -5,6 +5,7 @@
 package org.yasvara.pentas.ui.kit
 
 import android.graphics.Typeface
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
@@ -46,6 +47,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -351,12 +354,28 @@ fun Slider(
     val view = LocalView.current
     val change by rememberUpdatedState(onChange)
     val commit by rememberUpdatedState(onCommit)
+    val currentValue by rememberUpdatedState(value)
     var drag by remember { mutableFloatStateOf(Float.NaN) }
+    var lastTickTime by remember { mutableLongStateOf(0L) }
+    fun tickPosition(f: Float): Int {
+        val span = (range.endInclusive - range.start).takeIf { it > 0f } ?: 1f
+        val tickCount = if (steps > 0) steps + 1 else 20
+        return (((f - range.start) / span) * tickCount).roundToInt()
+    }
     fun snap(f: Float): Float {
         val v = range.start + f.coerceIn(0f, 1f) * (range.endInclusive - range.start)
         if (steps <= 0) return v
         val step = (range.endInclusive - range.start) / (steps + 1)
         return range.start + ((v - range.start) / step).roundToInt() * step
+    }
+    fun updateFromGesture(next: Float) {
+        val snapped = snap(next)
+        val now = SystemClock.uptimeMillis()
+        if (tickPosition(snapped) != tickPosition(currentValue) && now - lastTickTime >= 40L) {
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+            lastTickTime = now
+        }
+        change(snapped)
     }
     BoxWithConstraints(
         modifier.fillMaxWidth().height(height)
@@ -375,14 +394,14 @@ fun Slider(
             .pointerInput(range, steps) {
                 detectTapGestures { o ->
                     val v = snap(o.x / size.width)
-                    change(v)
+                    updateFromGesture(o.x / size.width)
                     commit(v)
                     view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                 }
             }
             .pointerInput(range, steps) {
                 detectHorizontalDragGestures(
-                    onDragStart = { o -> drag = o.x / size.width; change(snap(drag)) },
+                    onDragStart = { o -> drag = o.x / size.width; updateFromGesture(drag) },
                     onDragEnd = {
                         if (!drag.isNaN()) {
                             commit(snap(drag))
@@ -393,7 +412,7 @@ fun Slider(
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
                     drag = (drag + d / size.width).coerceIn(0f, 1f)
-                    change(snap(drag)); c.consume()
+                    updateFromGesture(drag); c.consume()
                 }
             },
     ) {
@@ -448,11 +467,23 @@ fun RangeSlider(
     val commit by rememberUpdatedState(onCommit)
     val lo by rememberUpdatedState(low)
     val hi by rememberUpdatedState(high)
+    val currentRange by rememberUpdatedState(low to high)
     val last = (count - 1).coerceAtLeast(1)
     var dragLow by remember { mutableStateOf(false) }
     var drag by remember { mutableFloatStateOf(Float.NaN) }
+    var lastTickTime by remember { mutableLongStateOf(0L) }
     fun index(f: Float) = (f.coerceIn(0f, 1f) * last).roundToInt()
     fun move(i: Int): Pair<Int, Int> = if (dragLow) i.coerceAtMost(hi) to hi else lo to i.coerceAtLeast(lo)
+    fun updateFromGesture(i: Int): Pair<Int, Int> {
+        val next = move(i)
+        val now = SystemClock.uptimeMillis()
+        if (next != currentRange && now - lastTickTime >= 40L) {
+            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK)
+            lastTickTime = now
+        }
+        change(next.first, next.second)
+        return next
+    }
     fun pickLow(f: Float): Boolean {
         val i = f * last
         return if (lo == hi) i < lo else abs(i - lo) < abs(i - hi)
@@ -464,8 +495,7 @@ fun RangeSlider(
                 detectTapGestures { o ->
                     val f = o.x / size.width
                     dragLow = pickLow(f)
-                    val (a, b) = move(index(f))
-                    change(a, b)
+                    val (a, b) = updateFromGesture(index(f))
                     commit(a, b)
                     view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
                 }
@@ -485,13 +515,14 @@ fun RangeSlider(
                     onDragCancel = { drag = Float.NaN },
                 ) { c, d ->
                     drag = (drag + d / size.width).coerceIn(0f, 1f)
-                    val (a, b) = move(index(drag)); change(a, b); c.consume()
+                    updateFromGesture(index(drag)); c.consume()
                 }
             },
     ) {
         val w = maxWidth - 3.dp
         val track = height * 2 / 3
         val r = track / 2
+        val activeColor = if (enabled) cs.primary else cs.onSurfaceVariant.copy(alpha = 0.48f)
         val x0 = w * (low.toFloat() / last)
         val x1 = w * (high.toFloat() / last)
         val y = (height - track) / 2
@@ -503,9 +534,9 @@ fun RangeSlider(
         Box(
             Modifier.offset(x = start, y = y).width((x1 - 4.dp - start).coerceAtLeast(0.dp)).height(track)
                 .clip(RoundedCornerShape(if (x0 > 7.dp) 3.dp else r, 3.dp, 3.dp, if (x0 > 7.dp) 3.dp else r))
-                .background(cs.primary),
+                .background(activeColor),
         )
-        Box(Modifier.offset(x = x0).size(3.dp, height).clip(CircleShape).background(cs.primary)
+        Box(Modifier.offset(x = x0).size(3.dp, height).clip(CircleShape).background(activeColor)
             .semantics {
                 contentDescription = "$description minimum"
                 progressBarRangeInfo = ProgressBarRangeInfo(low.toFloat(), 0f..high.toFloat(), (high - 1).coerceAtLeast(0))
@@ -515,7 +546,7 @@ fun RangeSlider(
                     if (next == low) false else { change(next, hi); commit(next, hi); true }
                 }
             })
-        Box(Modifier.offset(x = x1).size(3.dp, height).clip(CircleShape).background(cs.primary)
+        Box(Modifier.offset(x = x1).size(3.dp, height).clip(CircleShape).background(activeColor)
             .semantics {
                 contentDescription = "$description maximum"
                 progressBarRangeInfo = ProgressBarRangeInfo(high.toFloat(), low.toFloat()..last.toFloat(), (last - low - 1).coerceAtLeast(0))
