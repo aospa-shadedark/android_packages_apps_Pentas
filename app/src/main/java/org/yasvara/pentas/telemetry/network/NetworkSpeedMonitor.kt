@@ -5,6 +5,7 @@
 package org.yasvara.pentas.telemetry.network
 
 import android.net.TrafficStats
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
@@ -28,28 +29,37 @@ class NetworkSpeedMonitor {
         Log.i(TAG, "Starting speed monitor for UID=$gameUid")
 
         monitorJob = scope.launch {
-            var lastRx = TrafficStats.getUidRxBytes(gameUid)
-            var lastTx = TrafficStats.getUidTxBytes(gameUid)
+            var lastRx = TrafficStats.getUidRxBytes(gameUid).takeIf { it >= 0L }
+            var lastTx = TrafficStats.getUidTxBytes(gameUid).takeIf { it >= 0L }
+            var lastSampleAt = SystemClock.elapsedRealtime()
 
             while (isActive) {
                 delay(INTERVAL_MS)
                 try {
                     val currentRx = TrafficStats.getUidRxBytes(gameUid)
                     val currentTx = TrafficStats.getUidTxBytes(gameUid)
+                    val sampleAt = SystemClock.elapsedRealtime()
 
-                    if (currentRx != TrafficStats.UNSUPPORTED.toLong() && currentTx != TrafficStats.UNSUPPORTED.toLong()) {
-                        val rxDiff = currentRx - lastRx
-                        val txDiff = currentTx - lastTx
-
-                        // Calculate KB/s (byte diff / 1024 / 1 second)
-                        rxSpeedKbps.value = (rxDiff / 1024f).coerceAtLeast(0f)
-                        txSpeedKbps.value = (txDiff / 1024f).coerceAtLeast(0f)
-
+                    if (currentRx >= 0L && currentTx >= 0L) {
+                        val elapsedSec = ((sampleAt - lastSampleAt).coerceAtLeast(1L)) / 1000f
+                        val previousRx = lastRx
+                        val previousTx = lastTx
+                        if (previousRx != null && previousTx != null) {
+                            rxSpeedKbps.value = ((currentRx - previousRx).coerceAtLeast(0L) / 1024f / elapsedSec)
+                            txSpeedKbps.value = ((currentTx - previousTx).coerceAtLeast(0L) / 1024f / elapsedSec)
+                        } else {
+                            rxSpeedKbps.value = 0f
+                            txSpeedKbps.value = 0f
+                        }
                         lastRx = currentRx
                         lastTx = currentTx
+                        lastSampleAt = sampleAt
                     } else {
                         rxSpeedKbps.value = 0f
                         txSpeedKbps.value = 0f
+                        lastRx = null
+                        lastTx = null
+                        lastSampleAt = sampleAt
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Speed monitor error", e)

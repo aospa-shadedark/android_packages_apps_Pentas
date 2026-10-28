@@ -22,6 +22,7 @@ class NetworkTelemetry @Inject constructor() {
 
     val latencyMs: MutableState<Int> get() = ping.latencyMs
     val allServerPings: MutableState<List<Pair<String, Int>>> get() = ping.allServerPings
+    val pingSource: MutableState<PingSource> get() = ping.source
     val rxSpeedKbps: MutableState<Float> get() = speed.rxSpeedKbps
     val txSpeedKbps: MutableState<Float> get() = speed.txSpeedKbps
 

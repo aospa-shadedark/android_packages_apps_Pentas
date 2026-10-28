@@ -16,6 +16,8 @@ import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 
+enum class PingSource { NONE, GAME_ENDPOINTS, NETWORK_ROUTE }
+
 /**
  * Latency to the game's servers: ICMP ping, with a TCP connect fallback. When the game's sockets
  * can't be seen, it measures the active network's DNS instead.
@@ -45,6 +47,8 @@ class NetworkPingMonitor {
 
     /** All discovered servers and their latest RTT. */
     val allServerPings: MutableState<List<Pair<String, Int>>> = mutableStateOf(emptyList())
+    /** Whether the displayed endpoints are game peers or a network-route fallback. */
+    val source: MutableState<PingSource> = mutableStateOf(PingSource.NONE)
 
     // ── Internal state ────────────────────────────────────────────────
 
@@ -56,6 +60,7 @@ class NetworkPingMonitor {
     private var cachedServerEndpoints = emptyList<Pair<String, Int>>()
     private var consecutiveFails = 0
     private var consecutiveGood = 0
+    private var fallbackPolls = 0
 
     // ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -64,9 +69,11 @@ class NetworkPingMonitor {
         val runGeneration = generation
         connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
         socketsHidden = false
+        source.value = PingSource.NONE
         cachedServerEndpoints = emptyList()
         consecutiveFails = 0
         consecutiveGood = 0
+        fallbackPolls = 0
         Log.i(TAG, "Starting ping monitor for UID=$uid")
 
         monitorJob = scope.launch {
@@ -102,9 +109,11 @@ class NetworkPingMonitor {
         monitorJob = null
         latencyMs.value = -1
         allServerPings.value = emptyList()
+        source.value = PingSource.NONE
         cachedServerEndpoints = emptyList()
         consecutiveFails = 0
         consecutiveGood = 0
+        fallbackPolls = 0
         Log.i(TAG, "Ping monitor stopped")
     }
 
@@ -112,6 +121,14 @@ class NetworkPingMonitor {
 
     private fun pollOnce(runGeneration: Long, uid: Int) {
         if (runGeneration != generation) return
+        // If only a route fallback is available, periodically look again for the game's
+        // TCP peers in case its sockets appeared after the game session started.
+        if (source.value == PingSource.NETWORK_ROUTE && !socketsHidden && ++fallbackPolls >= 5) {
+            val resolved = resolveServerEndpoints(uid)
+            if (runGeneration != generation) return
+            cachedServerEndpoints = resolved
+            fallbackPolls = 0
+        }
         // If no game sockets were found, retry discovery only after several polling
         // intervals instead of launching `ss` on every tick.
         if (cachedServerEndpoints.isEmpty() && consecutiveFails >= RE_RESOLVE_AFTER_FAILS) {
@@ -157,7 +174,10 @@ class NetworkPingMonitor {
 
     /** Remote endpoints belonging to this game UID. Never borrows other apps' sockets. */
     private fun resolveServerEndpoints(uid: Int): List<Pair<String, Int>> {
-        if (uid <= 0) return emptyList()
+        if (uid <= 0) {
+            source.value = PingSource.NONE
+            return emptyList()
+        }
         if (socketsHidden) return networkEndpoints()
         val endpoints = LinkedHashSet<Pair<String, Int>>(8)
         var sockets = 0
@@ -177,18 +197,20 @@ class NetworkPingMonitor {
         } finally {
             proc?.let { runCatching { it.destroyForcibly() } }
         }
-        if (sockets == 0) {
+        if (endpoints.isEmpty()) {
             // system_app may neither use sock_diag nor read /proc/net (both neverallowed for app
-            // domains), so ss lists nothing at all. Stop running it and measure the network instead.
-            socketsHidden = true
-            Log.i(TAG, "ss lists no sockets; measuring the network's DNS instead")
+            // domains). If no game TCP peers were visible, use the active network as a fallback.
+            if (sockets == 0) socketsHidden = true
+            Log.i(TAG, "No game TCP endpoints found; measuring the network route instead")
             return networkEndpoints()
         }
+        source.value = PingSource.GAME_ENDPOINTS
         return endpoints.toList()
     }
 
     /** The active network's DNS servers, or its default gateway when it has none. */
     private fun networkEndpoints(): List<Pair<String, Int>> {
+        source.value = PingSource.NETWORK_ROUTE
         val cm = connectivity ?: return emptyList()
         val link = runCatching { cm.activeNetwork?.let { cm.getLinkProperties(it) } }.getOrNull() ?: return emptyList()
         val dns = link.dnsServers.mapNotNull { it.hostAddress }.filterNot(::isLocalIp)

@@ -41,6 +41,7 @@ import org.yasvara.pentas.ui.kit.SettingRow
 import org.yasvara.pentas.ui.kit.Toggle
 import org.yasvara.pentas.ui.kit.label
 import org.yasvara.pentas.ui.kit.num
+import org.yasvara.pentas.telemetry.network.PingSource
 
 /** Re-runs [onEvent] whenever one of [actions] is broadcast, while composed. */
 @Composable
@@ -153,13 +154,22 @@ fun PingPage() {
     var refresh by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) { while (true) { delay(1000); refresh++ } }
     val servers = remember(refresh) { o.network.allServerPings.value }
+    val source = o.network.pingSource.value
     SubPage("Network") {
         Block(padding = 10.dp) {
-            SettingRow("Ping", value = o.network.latencyMs.value.takeIf { it > 0 }?.let { "$it ms" } ?: "—")
+            SettingRow("Best RTT", value = o.network.latencyMs.value.takeIf { it > 0 }?.let { "$it ms" } ?: "—")
             SettingRow("Down", value = "%.0f KB/s".format(o.network.rxSpeedKbps.value))
             SettingRow("Up", value = "%.0f KB/s".format(o.network.txSpeedKbps.value))
         }
-        if (servers.isNotEmpty()) Section("Game servers")
+        val sourceNote = when (source) {
+            PingSource.GAME_ENDPOINTS -> "Estimated endpoint RTT using ICMP or a TCP connect; this may differ from the game's own ping."
+            PingSource.NETWORK_ROUTE -> "Fallback to the active network's DNS server or gateway; this is not game-server latency."
+            PingSource.NONE -> "Waiting for a measurable endpoint from this game."
+        }
+        Text(sourceNote, style = label(11.5.sp), color = cs.onSurfaceVariant)
+        if (servers.isNotEmpty()) Section(
+            if (source == PingSource.NETWORK_ROUTE) "Network route · DNS / gateway" else "Game endpoints"
+        )
         servers.forEachIndexed { i, (ip, ms) ->
             ListItem(
                 title = ip, shape = Kit.connected(i, servers.size),

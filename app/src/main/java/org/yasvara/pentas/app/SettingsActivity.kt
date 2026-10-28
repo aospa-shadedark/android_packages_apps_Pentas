@@ -184,6 +184,23 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
             Hero(appSettings, revision)
         }
 
+        item {
+            val cs = MaterialTheme.colorScheme
+            BentoCard(Modifier.fillMaxWidth(), onClick = {
+                context.startActivity(Intent(context, HelpActivity::class.java))
+            }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Icon(Sym.Info, contentDescription = null, tint = cs.primary, modifier = Modifier.size(24.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Help & guide", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = cs.onSurface)
+                        Text("Learn how games, the sidebar, sessions and device features work.",
+                            fontSize = 13.sp, lineHeight = 18.sp, color = cs.onSurfaceVariant)
+                    }
+                    Icon(Sym.KeyboardArrowRight, contentDescription = null, tint = cs.onSurfaceVariant)
+                }
+            }
+        }
+
         item { SectionLabel("Library") }
         item { LibraryCard(overview?.library) { context.startActivity(Intent(context, LibraryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)) } }
 

@@ -73,7 +73,7 @@ private fun Global(finish: () -> Unit) {
     var bypass by remember { mutableStateOf(Settings.System.getIntForUser(cr, ThermalProfiles.KEY_BYPASS_CHARGING, 0, UserHandle.USER_CURRENT) == 1) }
     Screen("Global", onBack = finish) {
         Section("Clocks")
-        ClockEditor(perf, clocks) { clocks = it; perf.saveGlobalProfile(it) }
+        ClockEditor(perf, clocks, warningKey = "global") { clocks = it; perf.saveGlobalProfile(it) }
 
         Section("Thermal")
         val options = remember {

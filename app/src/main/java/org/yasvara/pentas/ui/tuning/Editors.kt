@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -139,25 +141,71 @@ fun GameClocks(pkg: String) {
     val perf = rememberTuning().perf()
     var scope by remember(pkg) { mutableIntStateOf(perf.clockScope(pkg)) }
     var profile by remember(pkg) { mutableStateOf(perf.loadProfile(pkg) ?: PerfTuner.PerfProfile()) }
+    var pendingScope by remember(pkg) { mutableIntStateOf(scope) }
+    var confirmScope by remember(pkg) { mutableStateOf(false) }
     Block(padding = 10.dp) {
         Segmented(
             listOf("This game" to PerfTuner.ClockScope.PER_APP, "Global" to PerfTuner.ClockScope.GLOBAL),
-            selected = scope, onSelect = { scope = it; perf.setClockScope(pkg, it) },
+            selected = scope, onSelect = {
+                if (scope != it) {
+                    pendingScope = it
+                    confirmScope = true
+                } else {
+                    scope = it
+                    perf.setClockScope(pkg, it)
+                }
+            },
         )
     }
+    if (confirmScope) ClockWarningDialog(
+        title = if (pendingScope == PerfTuner.ClockScope.GLOBAL) "Use global clocks for this game?" else "Use this game's clocks?",
+        message = if (pendingScope == PerfTuner.ClockScope.GLOBAL) {
+            "This game will follow the global CPU and GPU limits. Higher limits can increase heat and battery drain, and thermal control may still reduce performance."
+        } else {
+            "This game will stop following global limits and use its saved CPU and GPU settings. They can increase heat and battery drain or reduce stability and performance."
+        },
+        confirmLabel = if (pendingScope == PerfTuner.ClockScope.GLOBAL) "Use global" else "Use game limits",
+        onConfirm = {
+            scope = pendingScope
+            perf.setClockScope(pkg, pendingScope)
+            confirmScope = false
+        },
+        onDismiss = { confirmScope = false },
+    )
     val global = scope == PerfTuner.ClockScope.GLOBAL
     ClockEditor(
         perf, if (global) perf.loadGlobalProfile() else profile, editable = !global,
+        warningKey = pkg,
         onCommit = { profile = it; perf.saveProfileFor(pkg, it) },
     )
 }
 
 /** Min/max clock per CPU cluster and GPU, snapped to the kernel tables. */
 @Composable
-fun ClockEditor(perf: PerfTuner, profile: PerfTuner.PerfProfile, editable: Boolean = true, onCommit: (PerfTuner.PerfProfile) -> Unit) {
+fun ClockEditor(
+    perf: PerfTuner,
+    profile: PerfTuner.PerfProfile,
+    editable: Boolean = true,
+    warningKey: Any = profile,
+    onCommit: (PerfTuner.PerfProfile) -> Unit,
+) {
     val cs = MaterialTheme.colorScheme
+    var draftProfile by remember(profile) { mutableStateOf(profile) }
+    var showClockConfirmation by remember { mutableStateOf(false) }
+    var clockWarningAcknowledged by remember(warningKey) { mutableStateOf(false) }
     var live by remember { mutableStateOf(emptyMap<Int, Long>()) }
     var gpuCap by remember { mutableLongStateOf(0L) }
+
+    fun applyClockChange(updated: PerfTuner.PerfProfile) {
+        draftProfile = updated
+        if (!clockWarningAcknowledged) showClockConfirmation = true else onCommit(updated)
+    }
+
+    fun cancelClockChange() {
+        draftProfile = profile
+        showClockConfirmation = false
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             live = perf.cpuClusters.associate { it.policyIndex to perf.cpuLiveMaxKhz(it) }
@@ -166,36 +214,64 @@ fun ClockEditor(perf: PerfTuner, profile: PerfTuner.PerfProfile, editable: Boole
         }
     }
     Text(
-        "Recommended: keep Default clocks. Changing limits can increase heat, drain or reduce performance; tune only for a specific reason.",
+        "Recommended: keep Default clocks. Changing limits can increase heat, drain, instability or reduce performance. Pentas asks before applying a clock change.",
         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
         style = label(11.sp),
         color = cs.onSurfaceVariant,
     )
     Block(padding = 10.dp) {
         perf.cpuClusters.filter { it.availableKhz.size > 1 }.forEach { c ->
-            val t = profile.clusters[c.policyIndex] ?: PerfTuner.ClusterTuning()
+            val t = draftProfile.clusters[c.policyIndex] ?: PerfTuner.ClusterTuning()
             ClockRange(
                 c.name, c.availableKhz, t.minKhz ?: c.hwMinKhz, t.maxKhz ?: c.hwMaxKhz, live[c.policyIndex] ?: 0L,
                 editable, format = { "%.2f".format(it / 1e6) }, unit = "GHz",
             ) { lo, hi ->
                 val tuned = t.copy(minKhz = lo.takeIf { it != c.hwMinKhz }, maxKhz = hi.takeIf { it != c.hwMaxKhz })
-                onCommit(profile.copy(clusters = profile.clusters + (c.policyIndex to tuned)))
+                applyClockChange(draftProfile.copy(clusters = draftProfile.clusters + (c.policyIndex to tuned)))
             }
         }
     }
     val gpu = perf.gpuInfo
     if (gpu.availableHz.size > 1) Block(padding = 10.dp) {
         ClockRange(
-            "GPU", gpu.availableHz.sorted(), profile.gpuMinHz ?: gpu.hwMinHz, profile.gpuMaxHz ?: gpu.hwMaxHz, gpuCap,
+            "GPU", gpu.availableHz.sorted(), draftProfile.gpuMinHz ?: gpu.hwMinHz, draftProfile.gpuMaxHz ?: gpu.hwMaxHz, gpuCap,
             editable, format = { "${it / 1_000_000}" }, unit = "MHz",
         ) { lo, hi ->
-            onCommit(profile.copy(gpuMinHz = lo.takeIf { it != gpu.hwMinHz }, gpuMaxHz = hi.takeIf { it != gpu.hwMaxHz }))
+            applyClockChange(draftProfile.copy(gpuMinHz = lo.takeIf { it != gpu.hwMinHz }, gpuMaxHz = hi.takeIf { it != gpu.hwMaxHz }))
         }
     }
-    if (editable && !profile.isDefault) Text(
+    if (editable && !draftProfile.isDefault) Text(
         "Reset to stock",
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { onCommit(PerfTuner.PerfProfile()) }.padding(8.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { applyClockChange(PerfTuner.PerfProfile()) }.padding(8.dp),
         style = label(12.sp, 600), color = cs.error,
+    )
+    if (showClockConfirmation) ClockWarningDialog(
+        title = "Apply clock limits?",
+        message = "CPU or GPU limits can raise heat and battery drain, reduce stability or lower performance. Keep Default unless you have a specific reason to tune them.",
+        confirmLabel = "Apply limits",
+        onConfirm = {
+            clockWarningAcknowledged = true
+            showClockConfirmation = false
+            onCommit(draftProfile)
+        },
+        onDismiss = ::cancelClockChange,
+    )
+}
+
+@Composable
+private fun ClockWarningDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmLabel) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

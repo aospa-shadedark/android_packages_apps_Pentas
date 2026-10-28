@@ -81,6 +81,12 @@
 
         <activity
             android:process=":ui"
+            android:name=".app.HelpActivity"
+            android:exported="false"
+            android:theme="@style/PentasTheme" />
+
+        <activity
+            android:process=":ui"
             android:name=".app.GlobalActivity"
             android:exported="false"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />

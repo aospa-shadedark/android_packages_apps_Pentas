@@ -121,13 +121,19 @@ private fun Ping() {
     val cs = MaterialTheme.colorScheme
     val view = LocalView.current
     val ms = o.network.latencyMs.value
+    val source = o.network.pingSource.value
     val bars = when { ms <= 0 -> 0; ms < 60 -> 3; ms < 120 -> 2; else -> 1 }
     Column(
         Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button) {
             view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
             o.state.open(Page.PING)
         }.semantics {
-            contentDescription = if (ms > 0) "Network latency $ms milliseconds" else "Network latency unavailable"
+            val kind = when (source) {
+                org.yasvara.pentas.telemetry.network.PingSource.GAME_ENDPOINTS -> "Game endpoint latency"
+                org.yasvara.pentas.telemetry.network.PingSource.NETWORK_ROUTE -> "Network route latency"
+                org.yasvara.pentas.telemetry.network.PingSource.NONE -> "Network latency"
+            }
+            contentDescription = if (ms > 0) "$kind $ms milliseconds" else "$kind unavailable"
         }.padding(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
