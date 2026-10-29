@@ -114,8 +114,8 @@ class Sidebar @Inject constructor(
         handle?.let { h -> if (h.isAttachedToWindow) wm.updateViewLayout(h, handleParams) else runCatching { wm.addView(h, handleParams) } }
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { s ->
             s.launch { snapshotFlow { settings.stayAwakeState.value }.collect(::keepScreenOn) }
+            s.launch { snapshotFlow { settings.lockBottomGestureState.value }.collect(::applyGestureLock) }
         }
-        setGestureLock(mode == SidebarMode.MODE_GAME && settings.lockBottomGesture)
         scheduleIdle()
         GameScreenshotUtil.registerOverlay(hide = { setVisible(false) }, show = { setVisible(true) })
     }
@@ -123,7 +123,7 @@ class Sidebar @Inject constructor(
     fun modeChanged(sessionMode: Int) {
         mode = sessionMode
         state.home()
-        setGestureLock(mode == SidebarMode.MODE_GAME && settings.lockBottomGesture)
+        applyGestureLock(settings.lockBottomGesture)
     }
 
     fun end() {
@@ -132,7 +132,7 @@ class Sidebar @Inject constructor(
         handle = null
         scope?.cancel(); scope = null
         main.removeCallbacksAndMessages(null)
-        setGestureLock(false)
+        applyGestureLock(false)
         pkg = null
         mode = SidebarMode.MODE_NONE
     }
@@ -162,11 +162,18 @@ class Sidebar @Inject constructor(
         main.postDelayed(goIdle, IDLE_MS)
     }
 
-    /** Uses this ROM's InsetsPolicy gesture lock, including its double-swipe escape. */
+    /** Save game-bar edits as the same preference used by the app settings screen. */
     fun setGestureLock(locked: Boolean) {
-        state.gestureLock.value = locked
+        settings.lockBottomGesture = locked
+        applyGestureLock(locked)
+    }
+
+    /** Session teardown clears the framework lock without changing the saved preference. */
+    private fun applyGestureLock(locked: Boolean) {
+        val enabled = locked && pkg != null && mode == SidebarMode.MODE_GAME
+        state.gestureLock.value = enabled
         Settings.System.putIntForUser(
-            context.contentResolver, KEY_GESTURE_LOCK, if (locked && pkg != null) 1 else 0, UserHandle.USER_CURRENT,
+            context.contentResolver, KEY_GESTURE_LOCK, if (enabled) 1 else 0, UserHandle.USER_CURRENT,
         )
     }
 

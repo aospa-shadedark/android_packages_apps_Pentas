@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.yasvara.pentas.charging.ChargingProfileListActivity
@@ -101,6 +102,7 @@ import org.yasvara.pentas.settings.fpsstats.FpsStatsActivity
 import org.yasvara.pentas.thermal.ThermalProfiles
 import org.yasvara.pentas.thermal.custom.CustomProfileListActivity
 import org.yasvara.pentas.ui.theme.PentasTheme
+import org.yasvara.pentas.utils.di.ServiceViewEntryPoint
 import org.yasvara.pentas.utils.rememberAppIconCache
 import kotlin.math.roundToInt
 
@@ -156,7 +158,9 @@ private fun loadOverview(context: Context): Overview {
 @Composable
 internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) {
     val context = LocalContext.current
-    val appSettings = remember { AppSettings(context.applicationContext) }
+    val appSettings = remember {
+        EntryPointAccessors.fromApplication(context.applicationContext, ServiceViewEntryPoint::class.java).appSettings()
+    }
     val obs = appSettings.observable
     var revision by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { revision++ }
@@ -232,7 +236,7 @@ internal fun PentasSettingsScreen(onBack: () -> Unit, showBack: Boolean = true) 
                     "In Ring mode, show answer and decline beside the handle")
                 SegmentRow(obs, "pentas_ringer_mode", "3", "Ringer",
                     listOf("0" to "Silent", "1" to "Vibrate", "2" to "Sound", "3" to "Keep"))
-                SwitchRow(obs, "pentas_lock_bottom_gesture", true, "Lock home swipe",
+                SwitchRow(obs, AppSettings.KEY_LOCK_BOTTOM_GESTURE, true, "Lock home swipe",
                     "Swipe up twice within 1.5 s to leave. Side back always works")
                 SwitchRow(obs, "pentas_no_three_screenshot", true, "Block three-finger screenshot",
                     "Stops the gesture from firing mid-game")
